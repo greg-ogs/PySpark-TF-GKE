@@ -1,0 +1,4 @@
+.idea
+.gcp
+*.terraform*
+*tfstate*
