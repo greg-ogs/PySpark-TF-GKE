@@ -113,15 +113,15 @@ resource "google_project_iam_member" "gke_sa_roles" {
   member  = "serviceAccount:${google_service_account.gke_sa.email}"
 }
 
-# PySpark Node Pool
-resource "google_container_node_pool" "pyspark_nodes" {
-  name       = "pyspark-pool"
+# Spark Node Pool
+resource "google_container_node_pool" "spark_nodes" {
+  name       = "spark-pool"
   location   = var.zone
   cluster    = google_container_cluster.primary.name
-  node_count = var.pyspark_node_count
+  node_count = var.spark_node_count
 
   node_config {
-    machine_type = var.pyspark_machine_type
+    machine_type = var.spark_machine_type
 
     # Google recommends custom service accounts with minimal permissions
     # that are specific to the workloads running within the cluster
@@ -132,12 +132,12 @@ resource "google_container_node_pool" "pyspark_nodes" {
     ]
 
     labels = {
-      workload = "pyspark"
+      workload = "spark"
     }
 
     taint {
       key    = "workload"
-      value  = "pyspark"
+      value  = "spark"
       effect = "NO_SCHEDULE"
     }
 

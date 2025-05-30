@@ -4,8 +4,8 @@ from pyspark.ml.clustering import KMeans
 from pyspark.sql.functions import col
 import random
 
-# 1. Create a SparkSession
-spark = SparkSession.builder.appName("KMeansExample").getOrCreate()
+# 1. Create a SparkSession for remote cluster processing
+spark = SparkSession.builder.master("spark://spark-master:7077").appName("KMeansExample").getOrCreate()
 
 # 2. Generate Synthetic Data
 # Let's create data for 3 distinct clusters

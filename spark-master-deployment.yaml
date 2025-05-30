@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-master
+  labels:
+    app: spark-master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-master
+  template:
+    metadata:
+      labels:
+        app: spark-master
+    spec:
+      nodeSelector:
+        workload: spark   # Ensure nodes in the spark node pool are selected
+      tolerations:
+        - key: "workload"
+          operator: "Equal"
+          value: "spark"
+          effect: "NoSchedule"
+      containers:
+      - name: spark-master
+        image: spark:latest  # official Spark docker image - specify a version
+        env:
+        - name: SPARK_MODE
+          value: "master"
+        ports:
+        - containerPort: 7077
+        - containerPort: 8080
+        args:
+        - ./bin/spark-class
+        - org.apache.spark.deploy.master.Master

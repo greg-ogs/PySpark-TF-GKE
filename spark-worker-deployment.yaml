@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-worker
+  labels:
+    app: spark-worker
+spec:
+  replicas: 3  # Adjust this count based on node pool size so that around 3 per node are scheduled
+  selector:
+    matchLabels:
+      app: spark-worker
+  template:
+    metadata:
+      labels:
+        app: spark-worker
+    spec:
+      nodeSelector:
+        workload: spark
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - spark-worker
+              topologyKey: "kubernetes.io/hostname"
+      tolerations:
+        - key: "workload"
+          operator: "Equal"
+          value: "spark"
+          effect: "NoSchedule"
+      containers:
+      - name: spark-worker
+        image: spark:latest  # official Spark docker image - specify a version
+        env:
+        - name: SPARK_MODE
+          value: "worker"
+        - name: SPARK_MASTER_URL
+          value: "spark://spark-master:7077"
+        ports:
+        - containerPort: 8081
+        args:
+        - ./bin/spark-class
+        - org.apache.spark.deploy.worker.Worker
+        - spark://spark-master:7077

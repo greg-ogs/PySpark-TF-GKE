@@ -55,14 +55,14 @@ variable "cluster_name" {
 }
 
 # Node pool variables
-variable "pyspark_node_count" {
-  description = "Number of nodes in the PySpark node pool"
+variable "spark_node_count" {
+  description = "Number of nodes in the Spark node pool"
   type        = number
   default     = 2
 }
 
-variable "pyspark_machine_type" {
-  description = "Machine type for PySpark nodes"
+variable "spark_machine_type" {
+  description = "Machine type for Spark nodes"
   type        = string
   default     = "e2-standard-4"  # 4 vCPUs, 16GB memory
 }
