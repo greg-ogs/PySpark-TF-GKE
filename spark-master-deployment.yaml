@@ -31,5 +31,5 @@ spec:
         - containerPort: 7077
         - containerPort: 8080
         args:
-        - ./bin/spark-class
+        - /opt/spark/bin/spark-class
         - org.apache.spark.deploy.master.Master
