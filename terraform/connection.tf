@@ -67,20 +67,14 @@ resource "google_compute_instance" "bastion" {
   metadata_startup_script = <<-EOF
     #!/bin/bash
 
+    sudo apt-get update
+    sudo apt-get install apt-transport-https ca-certificates gnupg curl
+    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+    sudo apt-get update && sudo apt-get install google-cloud-cli
+    sudo apt-get install google-cloud-cli-gke-gcloud-auth-plugin
+    sudo apt-get install kubectl
 
-    # Create a welcome message with instructions
-    cat > /etc/motd <<EOL
-    +=======================================================================+
-    |                                                                       |
-    |  Welcome to the GKE Bastion Host!                                     |
-    |                                                                       |
-    |  This machine is configured to access your private GKE cluster.       |
-    |  You can use kubectl commands directly from here.                     |
-    |                                                                       |
-    |  Try: kubectl get nodes                                              |
-    |                                                                       |
-    +=======================================================================+
-    EOL
   EOF
 
   # Make sure this instance depends on the cluster
