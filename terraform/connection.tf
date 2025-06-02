@@ -34,6 +34,12 @@ resource "google_compute_firewall" "bastion_ssh" {
 }
 
 # Bastion host VM
+
+locals {
+  startup_script_path = "/terraform/startup.sh"
+  startup_script_content = file(local.startup_script_path)
+}
+
 resource "google_compute_instance" "bastion" {
   name         = "gke-bastion"
   machine_type = "e2-medium"
@@ -64,19 +70,9 @@ resource "google_compute_instance" "bastion" {
   }
 
   # Install gcloud, kubectl, and configure kubectl
-  metadata_startup_script = <<-EOF
-    #!/bin/bash
-
-    apt-get update
-    apt-get install apt-transport-https ca-certificates gnupg curl
-    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
-    apt-get update && sudo apt-get install google-cloud-cli
-    apt-get install google-cloud-cli-gke-gcloud-auth-plugin
-    apt-get install gke-gcloud-auth-plugin
-    apt-get install kubectl
-
-  EOF
+  metadata = {
+    startup-script = local.startup_script_content # this is where startup script file is passed.
+  }
 
   # Make sure this instance depends on the cluster
   depends_on = [google_container_cluster.primary]
