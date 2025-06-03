@@ -1,5 +1,5 @@
 # Required variables
-project_id = "gc-bootcamp-14dfb3bf"
+project_id = "eec-signals-patterns"
 
 # Optional variables - uncomment and modify as needed
 # region = "us-central1"
