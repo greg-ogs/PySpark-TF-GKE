@@ -15,3 +15,7 @@ apt-get install google-cloud-cli-gke-gcloud-auth-plugin
 apt-get install gke-gcloud-auth-plugin
 
 apt-get install kubectl
+
+cat > commands.sh << 'EOF'
+gcloud logging read "resource.type=k8s_node AND resource.labels.node_name=gke-ml-cluster-spark-pool-3b61dfe4-6v3w"
+EOF
