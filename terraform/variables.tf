@@ -78,3 +78,10 @@ variable "tensorflow_machine_type" {
   type        = string
   default     = "e2-standard-8"  # 8 vCPUs, 32GB memory
 }
+
+# Bastion host variables
+variable "bastion_machine_type" {
+  description = "Machine type for bastion host"
+  type        = string
+  default     = "e2-medium"  # 2 vCPUs, 4GB memory
+}

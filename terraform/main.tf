@@ -149,36 +149,36 @@ resource "google_container_node_pool" "spark_nodes" {
 }
 
 # TensorFlow Node Pool
-resource "google_container_node_pool" "tensorflow_nodes" {
-  name       = "tensorflow-pool"
-  location   = var.zone
-  cluster    = google_container_cluster.primary.name
-  node_count = var.tensorflow_node_count
-
-  node_config {
-    machine_type = var.tensorflow_machine_type
-
-    # Google recommends custom service accounts with minimal permissions
-    # that are specific to the workloads running within the cluster
-    service_account = google_service_account.gke_sa.email
-
-    oauth_scopes = [
-      "https://www.googleapis.com/auth/cloud-platform"
-    ]
-
-    labels = {
-      workload = "tensorflow"
-    }
-
-    taint {
-      key    = "workload"
-      value  = "tensorflow"
-      effect = "NO_SCHEDULE"
-    }
-
-    # Enable workload identity on the node pool
-    workload_metadata_config {
-      mode = "GKE_METADATA"
-    }
-  }
-}
+# resource "google_container_node_pool" "tensorflow_nodes" {
+#   name       = "tensorflow-pool"
+#   location   = var.zone
+#   cluster    = google_container_cluster.primary.name
+#   node_count = var.tensorflow_node_count
+#
+#   node_config {
+#     machine_type = var.tensorflow_machine_type
+#
+#     # Google recommends custom service accounts with minimal permissions
+#     # that are specific to the workloads running within the cluster
+#     service_account = google_service_account.gke_sa.email
+#
+#     oauth_scopes = [
+#       "https://www.googleapis.com/auth/cloud-platform"
+#     ]
+#
+#     labels = {
+#       workload = "tensorflow"
+#     }
+#
+#     taint {
+#       key    = "workload"
+#       value  = "tensorflow"
+#       effect = "NO_SCHEDULE"
+#     }
+#
+#     # Enable workload identity on the node pool
+#     workload_metadata_config {
+#       mode = "GKE_METADATA"
+#     }
+#   }
+# }

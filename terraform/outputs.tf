@@ -22,15 +22,15 @@ output "cluster_ca_certificate" {
 }
 
 # Node pool outputs
-output "pyspark_node_pool_name" {
-  description = "Name of the PySpark node pool"
-  value       = google_container_node_pool.pyspark_nodes.name
+output "spark_node_pool_name" {
+  description = "Name of the Spark node pool"
+  value       = google_container_node_pool.spark_nodes.name
 }
 
-output "tensorflow_node_pool_name" {
-  description = "Name of the TensorFlow node pool"
-  value       = google_container_node_pool.tensorflow_nodes.name
-}
+# output "tensorflow_node_pool_name" {
+#   description = "Name of the TensorFlow node pool"
+#   value       = google_container_node_pool.tensorflow_nodes.name
+# }
 
 # Network outputs
 output "vpc_name" {
