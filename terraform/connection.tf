@@ -34,9 +34,9 @@ resource "google_compute_firewall" "bastion_ssh" {
 }
 
 # Bastion host VM
-
+# Startup script to get instance metadata and send to cloud storage
 locals {
-  startup_script_path = "/terraform/startup.sh"
+  startup_script_path = "/terraform/start-up.sh"
   startup_script_content = file(local.startup_script_path)
 }
 
