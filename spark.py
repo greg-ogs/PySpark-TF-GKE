@@ -25,3 +25,4 @@ print(f"Total processed items: {sum(partition_counts)}")
 
 # Stop the SparkSession
 spark.stop()
+
