@@ -52,6 +52,20 @@ resource "google_compute_firewall" "internal_communication" {
   ]
 }
 
+# Allow master to communicate with nodes for kubectl exec/logs/cp
+resource "google_compute_firewall" "master_to_nodes" {
+  name    = "${var.vpc_name}-allow-master-to-nodes"
+  network = google_compute_network.gke_network.self_link
+
+  allow {
+    protocol = "tcp"
+    ports    = ["10250", "443"] # Kubelet and webhooks
+  }
+
+  source_ranges = [google_container_cluster.primary.private_cluster_config[0].master_ipv4_cidr_block]
+  target_tags   = ["gke-node"]
+}
+
 # GKE Cluster
 resource "google_container_cluster" "primary" {
   name     = var.cluster_name
@@ -69,8 +83,15 @@ resource "google_container_cluster" "primary" {
   # Enable private cluster
   private_cluster_config {
     enable_private_nodes    = true
-    enable_private_endpoint = false
+    enable_private_endpoint = true
     master_ipv4_cidr_block  = "172.16.0.0/28"
+  }
+
+  master_authorized_networks_config {
+    cidr_blocks {
+      cidr_block   = var.subnet_cidr
+      display_name = "Bastion subnet to access GKE master"
+    }
   }
 
   # Configure IP allocation
@@ -86,7 +107,20 @@ resource "google_container_cluster" "primary" {
 
   # Disable autoscaling
   cluster_autoscaling {
-    enabled = false
+    enabled = true
+
+    resource_limits {
+      resource_type = "cpu"
+      minimum       = 1
+      maximum       = 10
+    }
+
+    resource_limits {
+      resource_type = "memory"
+      minimum       = 1
+      maximum       = 40
+    }
+
   }
 
   # Disable deletion protection
@@ -131,6 +165,8 @@ resource "google_container_node_pool" "spark_nodes" {
       "https://www.googleapis.com/auth/cloud-platform"
     ]
 
+    tags = ["gke-node"]
+
     labels = {
       workload = "spark"
     }
@@ -147,6 +183,37 @@ resource "google_container_node_pool" "spark_nodes" {
     }
   }
 }
+
+# General Purpose Node Pool for system components and other workloads
+resource "google_container_node_pool" "default_pool" {
+  name       = "default-pool"
+  location   = var.zone
+  cluster    = google_container_cluster.primary.name
+  node_count = 1
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+
+  autoscaling {
+    min_node_count = 1
+    max_node_count = 3
+  }
+
+  node_config {
+    machine_type    = "e2-medium" # A standard machine type for general workloads
+    service_account = google_service_account.gke_sa.email
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform"
+    ]
+    tags = ["gke-node"]
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+  }
+}
+
 
 # TensorFlow Node Pool
 # resource "google_container_node_pool" "tensorflow_nodes" {
