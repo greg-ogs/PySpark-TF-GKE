@@ -105,7 +105,6 @@ resource "google_container_cluster" "primary" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
-  # Disable autoscaling
   cluster_autoscaling {
     enabled = true
 

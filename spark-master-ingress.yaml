@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spark-master-ingress
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    # Allow access from the bastion host subnet
+    # The bastion host is in the subnet with CIDR 10.10.0.0/24
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: spark-master
+            port:
+              number: 7077
+      - path: /ui
+        pathType: Prefix
+        backend:
+          service:
+            name: spark-master
+            port:
+              number: 8080
