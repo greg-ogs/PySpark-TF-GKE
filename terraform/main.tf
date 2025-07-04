@@ -153,6 +153,17 @@ resource "google_container_node_pool" "spark_nodes" {
   cluster    = google_container_cluster.primary.name
   node_count = var.spark_node_count
 
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+
+  autoscaling {
+    min_node_count = 1
+    max_node_count = 2
+  }
+
+
   node_config {
     machine_type = var.spark_machine_type
 
