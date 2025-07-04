@@ -3,10 +3,10 @@ kind: Ingress
 metadata:
   name: spark-master-ingress
   annotations:
-    kubernetes.io/ingress.class: "gce"
     # Allow access from the bastion host subnet
     # The bastion host is in the subnet with CIDR 10.10.0.0/24
 spec:
+  ingressClassName: gce
   rules:
   - http:
       paths:

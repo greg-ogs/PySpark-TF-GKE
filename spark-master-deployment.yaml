@@ -27,11 +27,15 @@ spec:
         env:
         - name: SPARK_MODE
           value: "master"
+        - name: SPARK_MASTER_HOST
+          value: "0.0.0.0"
+        - name: SPARK_MASTER_PORT
+          value: "7077"
+        - name: SPARK_MASTER_WEBUI_PORT
+          value: "8080"
         ports:
         - containerPort: 7077
         - containerPort: 8080
         args:
         - /opt/spark/bin/spark-class
         - org.apache.spark.deploy.master.Master
-#        - --port
-#        - "7077"
