@@ -54,3 +54,27 @@ output "kubectl_command" {
   description = "Command to get kubectl credentials for the cluster"
   value       = "gcloud container clusters get-credentials ${google_container_cluster.primary.name} --zone ${google_container_cluster.primary.location} --project ${var.project_id}"
 }
+
+# Output the bucket name for reference
+output "datasets_bucket_name" {
+  description = "The name of the GCS bucket for health data"
+  value       = google_storage_bucket.datasets_bucket.name
+}
+
+# Output the bucket URL for reference
+output "datasets_bucket_url" {
+  description = "The URL of the GCS bucket for health data"
+  value       = "gs://${google_storage_bucket.datasets_bucket.name}"
+}
+
+# Output the bastion host IP for easy access
+output "bastion_ip" {
+  description = "The public IP address of the bastion host"
+  value       = google_compute_instance.bastion.network_interface[0].access_config[0].nat_ip
+}
+
+# Command to SSH into the bastion
+output "ssh_command" {
+  description = "Command to SSH into the bastion host"
+  value       = "gcloud compute ssh gke-bastion --zone=${var.zone} --project=${var.project_id}"
+}

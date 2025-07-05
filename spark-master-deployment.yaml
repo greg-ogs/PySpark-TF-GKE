@@ -24,7 +24,7 @@ spec:
           effect: "NoSchedule"
       containers:
       - name: spark-master
-        image: spark:latest  # official Spark docker image - specify a version
+        image: spark:latest  # official Spark docker image - can specify a version
         env:
         - name: SPARK_MODE
           value: "master"
@@ -34,7 +34,7 @@ spec:
           value: "7077"
         - name: SPARK_MASTER_WEBUI_PORT
           value: "8080"
-        - name: GCP_PROJECT_ID
+        - name: GCP_PROJECT_ID # Variable for the gcs-connector (in the submit command)
           valueFrom:
             configMapKeyRef:
               name: gcp-config

@@ -1,71 +1,3 @@
-# Network resources
-resource "google_compute_network" "gke_network" {
-  name                    = var.vpc_name
-  auto_create_subnetworks = false
-}
-
-resource "google_compute_subnetwork" "gke_subnet" {
-  name          = var.subnet_name
-  region        = var.region
-  network       = google_compute_network.gke_network.self_link
-  ip_cidr_range = var.subnet_cidr
-
-  secondary_ip_range {
-    range_name    = "pods"
-    ip_cidr_range = var.pods_cidr
-  }
-
-  secondary_ip_range {
-    range_name    = "services"
-    ip_cidr_range = var.services_cidr
-  }
-}
-
-# Router and NAT for private cluster
-resource "google_compute_router" "router" {
-  name    = "${var.cluster_name}-router"
-  region  = var.region
-  network = google_compute_network.gke_network.self_link
-}
-
-resource "google_compute_router_nat" "nat" {
-  name                               = "${var.cluster_name}-nat"
-  router                             = google_compute_router.router.name
-  region                             = var.region
-  nat_ip_allocate_option             = "AUTO_ONLY"
-  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
-}
-
-# Firewall rule for internal cluster communication
-resource "google_compute_firewall" "internal_communication" {
-  name    = "${var.vpc_name}-allow-internal"
-  network = google_compute_network.gke_network.self_link
-
-  allow {
-    protocol = "all"
-  }
-
-  source_ranges = [
-    var.subnet_cidr,
-    var.pods_cidr,
-    var.services_cidr
-  ]
-}
-
-# Allow master to communicate with nodes for kubectl exec/logs/cp
-resource "google_compute_firewall" "master_to_nodes" {
-  name    = "${var.vpc_name}-allow-master-to-nodes"
-  network = google_compute_network.gke_network.self_link
-
-  allow {
-    protocol = "tcp"
-    ports    = ["10250", "443"] # Kubelet and webhooks
-  }
-
-  source_ranges = [google_container_cluster.primary.private_cluster_config[0].master_ipv4_cidr_block]
-  target_tags   = ["gke-node"]
-}
-
 # GKE Cluster
 resource "google_container_cluster" "primary" {
   name     = var.cluster_name
@@ -131,14 +63,6 @@ resource "google_service_account" "gke_sa" {
   account_id   = "${var.cluster_name}-sa"
   display_name = "GKE Service Account for ${var.cluster_name}"
 }
-# Create IAM binding between Kubernetes service account and Google service account
-resource "google_service_account_iam_binding" "workload_identity_binding" {
-  service_account_id = google_service_account.gke_sa.name
-  role               = "roles/iam.workloadIdentityUser"
-  members = [
-    "serviceAccount:${var.project_id}.svc.id.goog[default/spark-sa]"
-  ]
-}
 
 # Grant required roles to the service account
 resource "google_project_iam_member" "gke_sa_roles" {
@@ -152,6 +76,22 @@ resource "google_project_iam_member" "gke_sa_roles" {
   project = var.project_id
   role    = each.value
   member  = "serviceAccount:${google_service_account.gke_sa.email}"
+}
+
+# Add storage.objects.viewer role to the GKE service account
+resource "google_storage_bucket_iam_member" "gke_sa_storage_viewer" {
+  bucket = google_storage_bucket.datasets_bucket.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.gke_sa.email}"
+}
+
+# Create IAM binding between Kubernetes service account and Google service account
+resource "google_service_account_iam_binding" "workload_identity_binding" {
+  service_account_id = google_service_account.gke_sa.name
+  role               = "roles/iam.workloadIdentityUser"
+  members = [
+    "serviceAccount:${var.project_id}.svc.id.goog[default/spark-sa]"
+  ]
 }
 
 # Spark Node Pool
@@ -183,7 +123,7 @@ resource "google_container_node_pool" "spark_nodes" {
       "https://www.googleapis.com/auth/cloud-platform"
     ]
 
-    tags = ["gke-node"]
+    tags = ["spark-node"]
 
     labels = {
       workload = "spark"
@@ -216,7 +156,7 @@ resource "google_container_node_pool" "default_pool" {
 
   autoscaling {
     min_node_count = 1
-    max_node_count = 3
+    max_node_count = 2
   }
 
   node_config {
@@ -231,7 +171,6 @@ resource "google_container_node_pool" "default_pool" {
     }
   }
 }
-
 
 # TensorFlow Node Pool
 # resource "google_container_node_pool" "tensorflow_nodes" {

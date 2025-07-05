@@ -5,3 +5,9 @@ metadata:
   namespace: default
   annotations:
     iam.gke.io/gcp-service-account: "ml-cluster-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+    # This service account is for the master/worker deployments and allows workload identity binding...
+    # (in main.tf - "google_service_account_iam_binding" "workload_identity_binding").
+    # This service account is deployed using the `config.sh` script, generated during the bastion instance startup-script
+    # (Must be manually run it).
+    # The "${PROJECT_ID}" will be replaced with the actual project ID during deployment using the `config.sh` script.
+    # The "ml-cluster-sa" must match with the tf output `service_account_email`.

@@ -18,6 +18,7 @@ apt-get install -y kubectl
 
 apt-get install -y tar
 
+# Install java for spark server
 apt-get install -y openjdk-17-jdk
 
 # Install Python 3.11 and its development headers
@@ -28,6 +29,7 @@ apt-get install -y python3.11 \
 # Update alternatives to make python3 point to python3.11 (optional, but good for consistency)
 update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
+#Install python pip
 apt-get install -y python3-pip
 
 # Install PySpark and required packages
@@ -39,16 +41,17 @@ echo "export GCP_PROJECT_ID=${PROJECT_ID}" >> /etc/environment
 echo "export GCP_PROJECT_ID=${PROJECT_ID}" >> /etc/profile.d/gcp-env.sh
 chmod +x /etc/profile.d/gcp-env.sh
 
-# Create a script to upload health.csv to the GCS bucket
-cat > /home/grego/upload_health_csv.sh << 'EOF'
+# Create a script to upload dataset to the GCS bucket
+cat > /home/grego/upload_dataset.sh << 'EOF'
 #!/bin/bash
 # Get the project ID
 PROJECT_ID=$(gcloud config get-value project)
 BUCKET_NAME="${PROJECT_ID}-datasets"
 
+# Change the health.csv dataset for the actual dataset.
 gsutil cp health.csv gs://${BUCKET_NAME}/health.csv
 EOF
-chmod +x upload_health_csv.sh
+chmod +x /home/grego/upload_dataset.sh
 
 # Create a script to apply the ConfigMap with the correct project ID
 cat > /home/grego/config.sh << 'EOF'
@@ -67,9 +70,11 @@ kubectl apply -f gcp-config-applied.yaml
 kubectl apply -f spark-k8s-sa-applied.yaml
 
 # The Google Service Account email
+# The "ml-cluster-sa" must match with the tf output `service_account_email`.
 GSA_EMAIL="ml-cluster-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Annotate the Kubernetes Service Account
+# The spark-sa is the kubernetes (not google cloud) service account applied from the `spark-k8s-sa.yaml` manifest.
 kubectl annotate serviceaccount spark-sa \
     --namespace default \
     iam.gke.io/gcp-service-account="${GSA_EMAIL}"
@@ -80,5 +85,5 @@ kubectl rollout restart deployment spark-master
 kubectl rollout restart deployment spark-worker
 
 EOF
-chmod +x apply_configmap.sh
+chmod +x /home/grego/config.sh
 

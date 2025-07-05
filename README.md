@@ -48,11 +48,6 @@ The configuration creates the following resources:
    terraform apply
    ```
 
-5. After the deployment is complete, you can get the kubectl credentials using the command provided in the outputs:
-   ```
-   gcloud container clusters get-credentials CLUSTER_NAME --zone ZONE --project PROJECT_ID
-   ```
-
 ## Variables
 
 | Name | Description | Default |
@@ -127,7 +122,7 @@ b.  **SSH into the bastion host:**
 Execute the command obtained in the previous step.
 
 c.  **Verify `kubectl` access:**
-Once on the bastion host, confirm `kubectl` is configured and can communicate with your cluster:
+Once in the bastion host, confirm `kubectl` is configured and can communicate with your cluster:
 ```bash
 terraform output kubectl_command
 ```
@@ -141,7 +136,7 @@ You should see a list of your cluster nodes.
 
 a.  Use the label defined in your Spark master deployment (`app: spark-master`) to find the pod name:
 ```bash
-kubectl get services -l app=spark-master
+kubectl get services
 ```
 
 ### 3. Copy Your PySpark Script to the gke_bastion Instance
@@ -153,6 +148,13 @@ gcloud compute scp /path/to/your/local/spark.py <your-bastion-user>@gke-bastion:
 ```
 Replace placeholders accordingly. 
 `/tmp/main.py` is a suggested path on the bastion.
+
+### 4. Upload your dataset to google storage bucket
+Use the `upload_dataset.sh` to upload your dataset to google storage bucket. Edit the script to match the actual dataset name.
+```bash
+bash ./upload_dataset.sh
+```
+> At the end, a config map with the project id will be created as a variable holder for the gcs-connector in the submit command.
 
 ## Using Workload Identity with Spark for GCS Access
 
@@ -184,9 +186,9 @@ bash ./config.sh
 ```
 
 This script:
-- Creates the Kubernetes service account with the proper annotation
-- Applies the ConfigMap with the project ID
-- Restarts the Spark deployments to pick up the new service account
+- Creates the Kubernetes service account with the proper annotation.
+- Applies the ConfigMap with the project ID as variable holder for the gcs-connector in the submit command.
+- Restarts the Spark deployments to pick up the new service account.
 
 ### 4. Running Spark Jobs with GCS Access
 
@@ -194,13 +196,12 @@ Once Workload Identity is configured, you can run Spark jobs that access GCS wit
 
 ```bash
 spark-submit \
-    --master spark://<load balancer service ip>:7077> \
+    --master spark://<load balancer service ip>:7077 \
     --deploy-mode client \
     --name health-kmeans-job-standalone \
     --packages com.google.cloud.bigdataoss:gcs-connector:hadoop3-2.2.2 \
     --conf spark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem \ 
-    --conf spark.hadoop.fs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS \
-    main.py
+    --conf spark.hadoop.fs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS main.py
 ```
 
 The Spark pods will automatically use the GKE service account's permissions to access GCS.

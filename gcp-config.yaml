@@ -3,5 +3,8 @@ kind: ConfigMap
 metadata:
   name: gcp-config
 data:
-  # This will be replaced with the actual project ID during deployment
   GCP_PROJECT_ID: "${PROJECT_ID}"
+  # The configmap is a variable holder for the gcs connector in the submit command.
+  # This config map is deployed using the `config.sh` script, generated during the bastion instance startup-script
+  # (Must be manually run it).
+  # The "${PROJECT_ID}" will be replaced with the actual project ID during deployment using the `config.sh` script.

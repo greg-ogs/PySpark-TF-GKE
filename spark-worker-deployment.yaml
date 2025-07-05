@@ -42,7 +42,7 @@ spec:
           value: "worker"
         - name: SPARK_MASTER_URL
           value: "spark://spark-master:7077"
-        - name: GCP_PROJECT_ID
+        - name: GCP_PROJECT_ID # Variable for the gcs-connector (in the submit command)
           valueFrom:
             configMapKeyRef:
               name: gcp-config
