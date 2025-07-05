@@ -15,6 +15,7 @@ from pyspark.ml.clustering import KMeans
 from pyspark.ml.evaluation import ClusteringEvaluator
 from pyspark.ml import Pipeline
 from pyspark.sql.functions import col, isnan, when, count
+import os
 
 # Create a SparkSession with Kubernetes configuration
 # - spark:latest: Docker image for Spark
@@ -25,16 +26,26 @@ spark = SparkSession.builder \
     .appName("HealthKMeansClassification") \
     .config("spark.kubernetes.container.image", "spark:latest") \
     .config("spark.kubernetes.namespace", "default") \
-    .config("spark.master", "k8s://https://kubernetes.default.svc") \
     .getOrCreate()
+    # .config("spark.master", "spark://spark-master:7077") \
+
 
 try:
     # Step 1: Data Loading and Exploration
     # ====================================
 
-    # Load the health.csv dataset with header and schema inference
-    print("Loading health dataset...")
-    health_df = spark.read.csv("health.csv", header=True, inferSchema=True)
+    # Load the health.csv dataset from GCS bucket with header and schema inference
+    print("Loading health dataset from GCS bucket...")
+    # Get project ID from environment variable
+    project_id = os.getenv("GCP_PROJECT_ID")
+    if not project_id:
+        raise ValueError("GCP_PROJECT_ID environment variable is not set")
+
+    # Use the GCS path format: gs://bucket-name/file-path
+    bucket_name = f"{project_id}-datasets"
+    gcs_path = f"gs://{bucket_name}/health.csv"
+
+    health_df = spark.read.csv(gcs_path, header=True, inferSchema=True)
 
     # Print the schema to understand the data types of each column
     print("Dataset Schema:")
@@ -135,12 +146,12 @@ try:
     # Step 5: Save Model (Optional)
     # =============================
     # You can save the trained K-Means model and pipeline if needed for future use
-    # model_path = "health_kmeans_model"
-    # pipeline_path = "health_kmeans_pipeline"
-    # print(f"Saving K-Means model to {model_path}")
-    # model.save(model_path)
-    # print(f"Saving K-Means pipeline to {pipeline_path}")
-    # pipeline_model.save(pipeline_path)
+    model_path = "health_kmeans_model"
+    pipeline_path = "health_kmeans_pipeline"
+    print(f"Saving K-Means model to {model_path}")
+    model.save(model_path)
+    print(f"Saving K-Means pipeline to {pipeline_path}")
+    pipeline_model.save(pipeline_path)
 
 except Exception as e:
     print(f"An error occurred: {str(e)}")
@@ -148,5 +159,11 @@ except Exception as e:
 finally:
     # Step 6: Cleanup
     # ==============
+    print("===========================================================================================================")
+    print("===========================================================================================================")
+    print("===========================================================================================================")
     print("Stopping Spark session...")
+    print("===========================================================================================================")
+    print("===========================================================================================================")
+    print("===========================================================================================================")
     spark.stop()

@@ -99,11 +99,17 @@ This guide outlines the steps to submit a PySpark script to a Spark cluster depl
 1.  A provisioned GKE cluster with a Spark node pool.
 2.  Spark master and worker deployments and services running in the cluster (e.g., using `spark-master-deployment.yaml`, `spark-master-service.yaml`, `spark-worker-deployment.yaml`).
 3.  A bastion host VM (`gke-bastion`) configured with `gcloud` and `kubectl` to interact with the GKE cluster (as per `connection.tf`).
-4.  Your PySpark script (e.g., `spark.py`) ready.
+4.  Your PySpark script (e.g., `main.py`) ready.
 
-## Steps to Submit and Monitor Your PySpark Script
+## Bastion instance requirements
+1.  **Install Spark on the Bastion VM:** Download and configure a compatible Spark version on the `gke-bastion` VM.
+2.  **Ensure Script is on Bastion:** Your `main.py` must be accessible on the bastion.
 
-The primary method described here involves copying your script to the Spark master pod and executing it from there.
+This method requires an extra Spark installation on the bastion but can be useful for certain workflows.
+
+## Steps to Submit Your PySpark Script
+
+The primary method described here involves copying your script to the `gke_bastion` instance and executing it from there.
 
 ### 1. Access Your GKE Cluster via the Bastion Host
 
@@ -123,115 +129,78 @@ Execute the command obtained in the previous step.
 c.  **Verify `kubectl` access:**
 Once on the bastion host, confirm `kubectl` is configured and can communicate with your cluster:
 ```bash
+terraform output kubectl_command
+```
+Execute the command obtained in the previous step and then execute
+```bash
 kubectl get nodes
 ```
 You should see a list of your cluster nodes.
 
-### 2. Identify the Spark Master Pod
+### 2. Identify the Kubernetes Service IP for the Spark Master deployment
 
 a.  Use the label defined in your Spark master deployment (`app: spark-master`) to find the pod name:
 ```bash
-kubectl get pods -l app=spark-master
+kubectl get services -l app=spark-master
 ```
-Output will be similar to:
-```
-NAME                            READY   STATUS    RESTARTS   AGE
-spark-master-7f7f6f78f7-abcde   1/1     Running   0          1h
-```
-Note down the full name of the Spark master pod (e.g., `spark-master-7f7f6f78f7-abcde`).
 
-### 3. Copy Your PySpark Script to the Spark Master Pod
+### 3. Copy Your PySpark Script to the gke_bastion Instance
 
-a.  **Ensure your script is on the bastion host:**
-If your `spark.py` (or other script) is on your local machine, you'll first need to copy it to the bastion host. You can use `gcloud compute scp`:
+If your `main.py` (or another script) is on your local machine, you'll first need to copy it to the bastion host. You can use `gcloud compute scp`:
 ```bash
 # From your local machine, not the bastion
 gcloud compute scp /path/to/your/local/spark.py <your-bastion-user>@gke-bastion:/tmp/spark.py --zone=<your-zone> --project=<your-project-id>
 ```
-Replace placeholders accordingly. `/tmp/spark.py` is a suggested path on the bastion.
+Replace placeholders accordingly. 
+`/tmp/main.py` is a suggested path on the bastion.
 
-b.  **Copy the script from the bastion to the Spark master pod:**
-From the bastion host's terminal:
+## Using Workload Identity with Spark for GCS Access
+
+This project uses GKE Workload Identity to allow Spark pods to access Google Cloud Storage (GCS) without requiring service account keys. Here's how it works:
+
+### 1. Understanding Workload Identity
+
+Workload Identity is a GKE feature that allows Kubernetes service accounts to act as Google service accounts. This means:
+
+- Pods can access GCP resources using the permissions of the bound Google service account
+- No need to download or manage service account keys
+- More secure and manageable authentication
+
+### 2. Setup Components
+
+The following components are set up for Workload Identity:
+
+1. **GKE Cluster Configuration**: Workload Identity is enabled on the cluster with `workload_pool = "${var.project_id}.svc.id.goog"`
+2. **Kubernetes Service Account**: A service account named `spark-sa` is created in the Kubernetes cluster
+3. **IAM Binding**: The Kubernetes service account is bound to the GKE service account with the role `roles/iam.workloadIdentityUser`
+4. **Storage Permissions**: The GKE service account has `roles/storage.objectViewer` permission on the GCS bucket
+
+### 3. Applying Workload Identity Configuration
+
+After deploying the infrastructure with Terraform, run the provided script to apply the Workload Identity configuration:
+
 ```bash
-kubectl cp /tmp/spark.py <spark-master-pod-name>:/opt/spark/work-dir/spark.py
+bash ./config.sh
 ```
-Replace `/tmp/spark.py` with the path to your script on the bastion and `<spark-master-pod-name>` with the name you identified. `/opt/spark/work-dir/` is a common writable directory within the official Spark Docker images.
 
-### 4. Execute the PySpark Script Inside the Master Pod
+This script:
+- Creates the Kubernetes service account with the proper annotation
+- Applies the ConfigMap with the project ID
+- Restarts the Spark deployments to pick up the new service account
 
-a.  **Access the Spark master pod's shell:**
+### 4. Running Spark Jobs with GCS Access
+
+Once Workload Identity is configured, you can run Spark jobs that access GCS without additional authentication:
+
 ```bash
-kubectl exec -it <spark-master-pod-name> -- /bin/bash
+spark-submit \
+    --master spark://<load balancer service ip>:7077> \
+    --deploy-mode client \
+    --name health-kmeans-job-standalone \
+    --packages com.google.cloud.bigdataoss:gcs-connector:hadoop3-2.2.2 \
+    --conf spark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem \ 
+    --conf spark.hadoop.fs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS \
+    main.py
 ```
 
-b.  **Run `spark-submit`:**
-Once inside the master pod's shell, navigate to the directory where you copied the script (if needed) and use `spark-submit`:
-```bash
-/opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  /opt/spark/work-dir/spark.py
-```
-*   `--master spark://spark-master:7077`: This uses the Kubernetes service name (`spark-master`) and port (`7077`) defined in your `spark-master-service.yaml`.
-*   `/opt/spark/work-dir/spark.py`: Path to your script inside the pod.
-
-### 5. Check Workload Distribution and Script Output
-
-a.  **Direct Script Output:**
-The output of your `spark.py` script (e.g., `print` statements) will appear directly in the terminal of the Spark master pod where you ran `spark-submit`. For the example `spark.py`, you'll see:
-```
-Counts per partition: [100000, 100000, ..., 100000]
-Total processed items: 10000000
-```
-
-b.  **Spark Web UI:**
-*   **Set up port forwarding (from the bastion host):**
-    Open a *new* terminal window for the bastion host (or use a terminal multiplexer like `tmux` or `screen`) and run:
-```bash
-kubectl port-forward svc/spark-master 8080:8080
-```
-This forwards local port `8080` on your bastion to the Spark master UI port `8080` in the cluster. Keep this command running.
-*   **Access the UI:**
-    If your bastion host has a graphical environment and a browser, open `http://localhost:8080`.
-    If your bastion is headless, you might need to set up an SSH tunnel from your local machine to the bastion:
-```bash
-# From your local machine
-ssh -L 8080:localhost:8080 <your-bastion-user>@<bastion-external-ip>
-```
-Then, on your local machine, open `http://localhost:8080` in a web browser.
-*   **Explore the UI:** You'll see your application listed. Click on its name ("MyPySparkApp" for the example script) to view stages, tasks, and the distribution of work across executors (your Spark workers).
-
-c.  **Worker Pod Logs:**
-*   **Get worker pod names:**
-```bash
-kubectl get pods -l app=spark-worker
-```
-*   **Check logs for a specific worker or stream from all:**
-```bash
-# Logs for a specific worker
-kubectl logs <spark-worker-pod-name> -c spark-worker
-
-          # Follow (stream) logs from all worker pods
-          kubectl logs -f -l app=spark-worker -c spark-worker
-          ```
-          Look for messages indicating task execution.
-
-## Alternative: Submitting from the Bastion VM as a Client
-
-You can also run `spark-submit` directly from the bastion VM if you install Spark tools on it.
-
-1.  **Install Spark on the Bastion VM:** Download and configure a compatible Spark version on the `gke-bastion` VM.
-2.  **Ensure Script is on Bastion:** Your `spark.py` must be accessible on the bastion.
-3.  **Port-Forward Spark Master Service:**
-    ```bash
-    # On the bastion VM, keep this running
-    kubectl port-forward svc/spark-master 7077:7077
-    ```
-4.  **Submit the Job from Bastion:**
-    ```bash
-    # On the bastion VM, in another terminal
-    # Replace /path/to/your/bastion/spark/bin/spark-submit and /path/to/your/spark.py
-    /path/to/your/bastion/spark/bin/spark-submit \
-      --master spark://localhost:7077 \
-      /path/to/your/spark.py
-    ```
-This method requires an extra Spark installation on the bastion but can be useful for certain workflows. The `kubectl exec` method is generally simpler for interacting with Spark running entirely within Kubernetes.
+The Spark pods will automatically use the GKE service account's permissions to access GCS.

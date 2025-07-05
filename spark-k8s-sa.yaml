@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark-sa
+  namespace: default
+  annotations:
+    iam.gke.io/gcp-service-account: "ml-cluster-sa@${PROJECT_ID}.iam.gserviceaccount.com"

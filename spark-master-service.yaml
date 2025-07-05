@@ -5,7 +5,7 @@ metadata:
 spec:
   selector:
     app: spark-master
-  type: NodePort  # Changed from ClusterIP (default) to NodePort for GCE Ingress
+  type: LoadBalancer
   ports:
   - name: spark
     port: 7077

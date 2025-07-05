@@ -14,6 +14,7 @@ spec:
       labels:
         app: spark-master
     spec:
+      serviceAccountName: spark-sa
       nodeSelector:
         workload: spark   # Ensure nodes in the spark node pool are selected
       tolerations:
@@ -33,6 +34,11 @@ spec:
           value: "7077"
         - name: SPARK_MASTER_WEBUI_PORT
           value: "8080"
+        - name: GCP_PROJECT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: gcp-config
+              key: GCP_PROJECT_ID
         ports:
         - containerPort: 7077
         - containerPort: 8080

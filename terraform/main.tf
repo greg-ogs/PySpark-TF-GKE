@@ -131,6 +131,14 @@ resource "google_service_account" "gke_sa" {
   account_id   = "${var.cluster_name}-sa"
   display_name = "GKE Service Account for ${var.cluster_name}"
 }
+# Create IAM binding between Kubernetes service account and Google service account
+resource "google_service_account_iam_binding" "workload_identity_binding" {
+  service_account_id = google_service_account.gke_sa.name
+  role               = "roles/iam.workloadIdentityUser"
+  members = [
+    "serviceAccount:${var.project_id}.svc.id.goog[default/spark-sa]"
+  ]
+}
 
 # Grant required roles to the service account
 resource "google_project_iam_member" "gke_sa_roles" {

@@ -16,11 +16,4 @@ spec:
           service:
             name: spark-master
             port:
-              number: 7077
-      - path: /ui
-        pathType: Prefix
-        backend:
-          service:
-            name: spark-master
-            port:
               number: 8080
