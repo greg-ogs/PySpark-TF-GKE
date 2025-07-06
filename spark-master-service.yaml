@@ -5,6 +5,7 @@ metadata:
 spec:
   selector:
     app: spark-master
+  type: LoadBalancer
   ports:
   - name: spark
     port: 7077

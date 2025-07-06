@@ -1,57 +1,3 @@
-# Network resources
-resource "google_compute_network" "gke_network" {
-  name                    = var.vpc_name
-  auto_create_subnetworks = false
-}
-
-resource "google_compute_subnetwork" "gke_subnet" {
-  name          = var.subnet_name
-  region        = var.region
-  network       = google_compute_network.gke_network.self_link
-  ip_cidr_range = var.subnet_cidr
-
-  secondary_ip_range {
-    range_name    = "pods"
-    ip_cidr_range = var.pods_cidr
-  }
-
-  secondary_ip_range {
-    range_name    = "services"
-    ip_cidr_range = var.services_cidr
-  }
-}
-
-# Router and NAT for private cluster
-resource "google_compute_router" "router" {
-  name    = "${var.cluster_name}-router"
-  region  = var.region
-  network = google_compute_network.gke_network.self_link
-}
-
-resource "google_compute_router_nat" "nat" {
-  name                               = "${var.cluster_name}-nat"
-  router                             = google_compute_router.router.name
-  region                             = var.region
-  nat_ip_allocate_option             = "AUTO_ONLY"
-  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
-}
-
-# Firewall rule for internal cluster communication
-resource "google_compute_firewall" "internal_communication" {
-  name    = "${var.vpc_name}-allow-internal"
-  network = google_compute_network.gke_network.self_link
-
-  allow {
-    protocol = "all"
-  }
-
-  source_ranges = [
-    var.subnet_cidr,
-    var.pods_cidr,
-    var.services_cidr
-  ]
-}
-
 # GKE Cluster
 resource "google_container_cluster" "primary" {
   name     = var.cluster_name
@@ -69,8 +15,15 @@ resource "google_container_cluster" "primary" {
   # Enable private cluster
   private_cluster_config {
     enable_private_nodes    = true
-    enable_private_endpoint = false
+    enable_private_endpoint = true
     master_ipv4_cidr_block  = "172.16.0.0/28"
+  }
+
+  master_authorized_networks_config {
+    cidr_blocks {
+      cidr_block   = var.subnet_cidr
+      display_name = "Bastion subnet to access GKE master"
+    }
   }
 
   # Configure IP allocation
@@ -84,9 +37,21 @@ resource "google_container_cluster" "primary" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
-  # Disable autoscaling
   cluster_autoscaling {
-    enabled = false
+    enabled = true
+
+    resource_limits {
+      resource_type = "cpu"
+      minimum       = 1
+      maximum       = 10
+    }
+
+    resource_limits {
+      resource_type = "memory"
+      minimum       = 1
+      maximum       = 40
+    }
+
   }
 
   # Disable deletion protection
@@ -113,12 +78,39 @@ resource "google_project_iam_member" "gke_sa_roles" {
   member  = "serviceAccount:${google_service_account.gke_sa.email}"
 }
 
+# Add storage.objects.viewer role to the GKE service account
+resource "google_storage_bucket_iam_member" "gke_sa_storage_viewer" {
+  bucket = google_storage_bucket.datasets_bucket.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.gke_sa.email}"
+}
+
+# Create IAM binding between Kubernetes service account and Google service account
+resource "google_service_account_iam_binding" "workload_identity_binding" {
+  service_account_id = google_service_account.gke_sa.name
+  role               = "roles/iam.workloadIdentityUser"
+  members = [
+    "serviceAccount:${var.project_id}.svc.id.goog[default/spark-sa]"
+  ]
+}
+
 # Spark Node Pool
 resource "google_container_node_pool" "spark_nodes" {
   name       = "spark-pool"
   location   = var.zone
   cluster    = google_container_cluster.primary.name
   node_count = var.spark_node_count
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+
+  autoscaling {
+    min_node_count = 1
+    max_node_count = 2
+  }
+
 
   node_config {
     machine_type = var.spark_machine_type
@@ -131,6 +123,8 @@ resource "google_container_node_pool" "spark_nodes" {
       "https://www.googleapis.com/auth/cloud-platform"
     ]
 
+    tags = ["spark-node"]
+
     labels = {
       workload = "spark"
     }
@@ -142,6 +136,36 @@ resource "google_container_node_pool" "spark_nodes" {
     }
 
     # Enable workload identity on the node pool
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+  }
+}
+
+# General Purpose Node Pool for system components and other workloads
+resource "google_container_node_pool" "default_pool" {
+  name       = "default-pool"
+  location   = var.zone
+  cluster    = google_container_cluster.primary.name
+  node_count = 1
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+
+  autoscaling {
+    min_node_count = 1
+    max_node_count = 2
+  }
+
+  node_config {
+    machine_type    = "e2-medium" # A standard machine type for general workloads
+    service_account = google_service_account.gke_sa.email
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform"
+    ]
+    tags = ["gke-node"]
     workload_metadata_config {
       mode = "GKE_METADATA"
     }

@@ -17,6 +17,20 @@ resource "google_project_iam_member" "bastion_sa_roles" {
   member  = "serviceAccount:${google_service_account.bastion_sa.email}"
 }
 
+# Add storage.objects.viewer role to the bastion service account
+resource "google_storage_bucket_iam_member" "bastion_sa_storage_viewer" {
+  bucket = google_storage_bucket.datasets_bucket.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.bastion_sa.email}"
+}
+
+# Add storage.objects.create permission to the bastion service account
+resource "google_storage_bucket_iam_member" "bastion_sa_storage_creator" {
+  bucket = google_storage_bucket.datasets_bucket.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.bastion_sa.email}"
+}
+
 # Firewall rule to allow SSH access to the bastion host
 resource "google_compute_firewall" "bastion_ssh" {
   name    = "allow-ssh-to-bastion"
@@ -33,8 +47,8 @@ resource "google_compute_firewall" "bastion_ssh" {
   target_tags   = ["bastion-host"]
 }
 
-# Bastion host VM
-# Startup script to get instance metadata and send to cloud storage
+# Bastion host instance
+# Startup script
 locals {
   startup_script_path = "/terraform/start-up.sh"
   startup_script_content = file(local.startup_script_path)
@@ -55,7 +69,7 @@ resource "google_compute_instance" "bastion" {
   }
 
   network_interface {
-    network    = google_compute_network.gke_network.self_link
+    network    = google_compute_network.gke_network.self_link # pointing to main network configuration
     subnetwork = google_compute_subnetwork.gke_subnet.self_link
 
     # Assign a public IP to the bastion
@@ -69,23 +83,11 @@ resource "google_compute_instance" "bastion" {
     scopes = ["cloud-platform"]
   }
 
-  # Install gcloud, kubectl, and configure kubectl
+  # Apply the startup script to install gcloud, kubectl, and configure kubectl & Pyspark
   metadata = {
     startup-script = local.startup_script_content # this is where startup script file is passed.
   }
 
   # Make sure this instance depends on the cluster
   depends_on = [google_container_cluster.primary]
-}
-
-# Output the bastion host IP for easy access
-output "bastion_ip" {
-  description = "The public IP address of the bastion host"
-  value       = google_compute_instance.bastion.network_interface[0].access_config[0].nat_ip
-}
-
-# Command to SSH into the bastion
-output "ssh_command" {
-  description = "Command to SSH into the bastion host"
-  value       = "gcloud compute ssh gke-bastion --zone=${var.zone} --project=${var.project_id}"
 }

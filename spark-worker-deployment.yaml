@@ -14,6 +14,7 @@ spec:
       labels:
         app: spark-worker
     spec:
+      serviceAccountName: spark-sa
       nodeSelector:
         workload: spark
       affinity:
@@ -41,6 +42,11 @@ spec:
           value: "worker"
         - name: SPARK_MASTER_URL
           value: "spark://spark-master:7077"
+        - name: GCP_PROJECT_ID # Variable for the gcs-connector (in the submit command)
+          valueFrom:
+            configMapKeyRef:
+              name: gcp-config
+              key: GCP_PROJECT_ID
         ports:
         - containerPort: 8081
         args:

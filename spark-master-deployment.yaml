@@ -14,6 +14,7 @@ spec:
       labels:
         app: spark-master
     spec:
+      serviceAccountName: spark-sa
       nodeSelector:
         workload: spark   # Ensure nodes in the spark node pool are selected
       tolerations:
@@ -23,10 +24,21 @@ spec:
           effect: "NoSchedule"
       containers:
       - name: spark-master
-        image: spark:latest  # official Spark docker image - specify a version
+        image: spark:latest  # official Spark docker image - can specify a version
         env:
         - name: SPARK_MODE
           value: "master"
+        - name: SPARK_MASTER_HOST
+          value: "0.0.0.0"
+        - name: SPARK_MASTER_PORT
+          value: "7077"
+        - name: SPARK_MASTER_WEBUI_PORT
+          value: "8080"
+        - name: GCP_PROJECT_ID # Variable for the gcs-connector (in the submit command)
+          valueFrom:
+            configMapKeyRef:
+              name: gcp-config
+              key: GCP_PROJECT_ID
         ports:
         - containerPort: 7077
         - containerPort: 8080
