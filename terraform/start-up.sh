@@ -43,7 +43,7 @@ chmod +x /etc/profile.d/gcp-env.sh
 
 # Create a script to upload dataset to the GCS bucket
 cat > /home/grego/upload_dataset.sh << 'EOF'
-#!/bin/bash
+#!/bin/sh
 # Get the project ID
 PROJECT_ID=$(gcloud config get-value project)
 BUCKET_NAME="${PROJECT_ID}-datasets"
@@ -55,7 +55,7 @@ chmod +x /home/grego/upload_dataset.sh
 
 # Create a script to apply the ConfigMap with the correct project ID
 cat > /home/grego/config.sh << 'EOF'
-#!/bin/bash
+#!/bin/sh
 # Get the project ID
 PROJECT_ID=$(gcloud config get-value project)
 
