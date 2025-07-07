@@ -76,5 +76,5 @@ output "bastion_ip" {
 # Command to SSH into the bastion
 output "ssh_command" {
   description = "Command to SSH into the bastion host"
-  value       = "gcloud compute ssh gke-bastion --zone=${var.zone} --project=${var.project_id}"
+  value       = "gcloud compute ssh k8s-bastion --zone=${var.zone} --project=${var.project_id}"
 }

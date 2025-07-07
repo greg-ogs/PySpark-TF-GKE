@@ -55,8 +55,8 @@ locals {
 }
 
 resource "google_compute_instance" "bastion" {
-  name         = "gke-bastion"
-  machine_type = "e2-medium"
+  name         = "k8s-bastion"
+  machine_type = "n1-standard-1"
   zone         = var.zone
 
   tags = ["bastion-host"]
