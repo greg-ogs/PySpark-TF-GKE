@@ -1,4 +1,4 @@
 .idea
-terraform/.gcp/**/*.json
+**/.gcp/**/*.json
 *.terraform*
 *tfstate*
