@@ -120,8 +120,8 @@ spec:
               # We are cloning from a replica. Parse the binlog file and position
               # from the xtrabackup_slave_info file, which uses the old syntax.
               INFO_LINE=$(<xtrabackup_slave_info)
-              [[ $INFO_LINE =~ MASTER_LOG_FILE=\'([^\']*)\' ]] && LOG_FILE=${BASH_REMATCH[1]}
-              [[ $INFO_LINE =~ MASTER_LOG_POS=([0-9]*) ]] && LOG_POS=${BASH_REMATCH[1]}
+              [[ $INFO_LINE =~ SOURCE_LOG_FILE=\'([^\']*)\' ]] && LOG_FILE=${BASH_REMATCH[1]}
+              [[ $INFO_LINE =~ SOURCE_LOG_POS=([0-9]*) ]] && LOG_POS=${BASH_REMATCH[1]}
             
               # Exit if parsing fails.
               if [[ -z "$LOG_FILE" || -z "$LOG_POS" ]]; then
@@ -151,7 +151,7 @@ spec:
               echo "Initializing replication from clone position"
               # Corrected the 'e' to '-e' here
               mysql -h 127.0.0.1 \
-                    -e "$(<change_source_to.sql.in), \
+                    -e "RESET REPLICA ALL; $(<change_source_to.sql.in), \
                             SOURCE_HOST='mysql-0.mysql', \
                             SOURCE_USER='root', \
                             SOURCE_PASSWORD='', \
