@@ -34,6 +34,10 @@ spec:
             cp /mnt/config-map/primary.cnf /mnt/conf.d/
           else
             cp /mnt/config-map/replica.cnf /mnt/conf.d/
+          # Add relay-log and relay-log-index to prevent replica from trying to use another replica's relay log.
+            echo "[mysqld]" > /mnt/conf.d/zz-override.cnf
+            echo "relay-log=${HOSTNAME}-relay-bin" >> /mnt/conf.d/zz-override.cnf
+            echo "relay-log-index=${HOSTNAME}-relay-bin.index" >> /mnt/conf.d/zz-override.cnf
           fi
         volumeMounts:
         - name: conf
