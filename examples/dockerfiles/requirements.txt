@@ -1,0 +1,15 @@
+numpy
+pandas
+seaborn
+scikit-image
+scikit-learn
+opencv-python
+Pillow
+pyspark
+findspark
+diffusers
+transformers
+accelerate
+torchvision
+torchaudio
+sentencepiece
