@@ -42,3 +42,12 @@ kubectl run mysql-client --image=mysql:8.4.0 -i -t --rm --restart=Never --\
 kubectl run mysql-client --image=mysql:8.4.0 -i -t --rm --restart=Never -- `
   mysql -h mysql-read -e "SELECT * FROM test.messages"
 ```
+
+## Load a csv into a sql table
+Run a forward port command to map port 3306 in the local cluster.
+>[!WARNING]
+> Only for local development, may differ in cloud providers. 
+ 
+```
+ kubectl port-forward svc/mysql-external 3306:3306
+```

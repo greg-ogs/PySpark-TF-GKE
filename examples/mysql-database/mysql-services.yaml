@@ -30,5 +30,18 @@ spec:
     port: 3306
   selector:
     app: mysql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-external
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 3306
+    targetPort: 3306
+  selector:
+    app: mysql
+    statefulset.kubernetes.io/pod-name: mysql-0  # Target primary specifically
 
   

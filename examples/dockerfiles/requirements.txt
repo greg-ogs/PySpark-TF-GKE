@@ -4,12 +4,7 @@ seaborn
 scikit-image
 scikit-learn
 opencv-python
+mysql-connector-python
 Pillow
 pyspark
 findspark
-diffusers
-transformers
-accelerate
-torchvision
-torchaudio
-sentencepiece
