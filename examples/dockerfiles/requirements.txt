@@ -8,3 +8,4 @@ mysql-connector-python
 Pillow
 pyspark
 findspark
+huggingface_hub
