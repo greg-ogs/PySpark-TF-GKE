@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gcp-config
+data:
+  GCP_PROJECT_ID: "local"
+  # Local placeholder for compatibility with manifests that expect this var.
+  # Adjust if your Spark jobs or connectors read this value.
