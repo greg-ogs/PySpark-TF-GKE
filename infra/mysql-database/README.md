@@ -47,7 +47,7 @@ kubectl run mysql-client --image=mysql:8.4.0 -i -t --rm --restart=Never -- `
 Run a forward port command to map port 3306 in the local cluster.
 >[!WARNING]
 > Only for local development, may differ in cloud providers. 
- 
+> This command is to map the service's port 3306 into the local machine.
 ```
  kubectl port-forward svc/mysql-external 3306:3306
 ```
