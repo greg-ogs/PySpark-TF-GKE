@@ -19,7 +19,7 @@ spec:
         kubernetes.io/hostname: desktop-worker
       containers:
       - name: spark-master
-        image: spark:latest  # ensure this image is available to your kind cluster
+        image: gregogs/spark:custom-with-jdbc
         env:
         - name: SPARK_MODE
           value: "master"
