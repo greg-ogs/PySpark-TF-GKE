@@ -2,6 +2,7 @@ FROM spark:latest
 
 LABEL authors="greg-ogs"
 # gregogs/spark:custom-with-jdbc
+# docker image rm gregogs/spark:custom-with-jdbc ; docker build -no-cache -t gregogs/spark:custom-with-jdbc .\infra\general_spark\
 
 WORKDIR /app
 
