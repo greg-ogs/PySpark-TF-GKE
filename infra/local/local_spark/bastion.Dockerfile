@@ -7,7 +7,7 @@ LABEL authors="greg-ogs"
 
 WORKDIR /app
 
-COPY ./requirements.txt /app/requirements.txt
+COPY requirements.txt /app/requirements.txt
 
 USER root
 
@@ -16,7 +16,7 @@ RUN pip install -r /app/requirements.txt \
 
 USER spark
 # MySQL JDBC driver for JDBC reads
-COPY ./jars/mysql-connector-j-8.4.0.jar /opt/spark/jars/
+COPY jars/mysql-connector-j-8.4.0.jar /opt/spark/jars/
 
 # Optionally copy the workload script into the image; uncomment if you want it embedded.
 # COPY ../../spark_checks/python_checks/spark_workload_to_local_k8s.py /opt/spark/spark_workload_to_local_k8s.py
