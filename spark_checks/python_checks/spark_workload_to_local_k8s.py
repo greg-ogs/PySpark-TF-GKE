@@ -102,6 +102,10 @@ def read_data_from_mysql(spark):
             .option("user", user) \
             .option("password", password) \
             .option("driver", "com.mysql.cj.jdbc.Driver") \
+            .option("partitionColumn", "id") \
+            .option("lowerBound", "1") \
+            .option("upperBound", "1000000") \
+            .option("numPartitions", "16") \
             .load()
 
         logger.info("Data loaded successfully.")
@@ -130,8 +134,13 @@ def main():
     finally:
         if spark:
             spark.stop()
+            logger.info("=============================================================================================")
+            logger.info("=============================================================================================")
+            logger.info("=============================================================================================")
             logger.info("Spark session stopped.")
-
+            logger.info("=============================================================================================")
+            logger.info("=============================================================================================")
+            logger.info("=============================================================================================")
 
 if __name__ == "__main__":
     main()
