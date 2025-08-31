@@ -5,7 +5,6 @@ import socket
 # for k_means
 from pyspark.ml.feature import VectorAssembler, StringIndexer, OneHotEncoder
 from pyspark.ml.clustering import KMeans
-from pyspark.ml.evaluation import ClusteringEvaluator
 from pyspark.ml import Pipeline
 from pyspark.sql.functions import isnan, when
 from pyspark.sql.functions import col
@@ -14,10 +13,23 @@ class RetrieveDataFromMySQLOutside:
     def __init__(self):
         # Configure logging
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.ERROR ,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
+        logging.getLogger("urllib3").setLevel(logging.ERROR)
+        logging.getLogger("botocore").setLevel(logging.ERROR)
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+
+        self.logger.propagate = False
+
+        if not self.logger.handlers:
+            self.logger.addHandler(handler)
 
         # Default DB connection parameters when running driver OUTSIDE the cluster
         # Expect service endpoint to route traffic to the MySQL container, and allow
@@ -80,6 +92,8 @@ class RetrieveDataFromMySQLOutside:
                 .config("spark.blockManager.port", blockmanager_port) \
                 .getOrCreate()
             self.logger.info("Spark session created successfully.")
+            spark.sparkContext.setLogLevel("ERROR")
+            self.logger.info("Set Spark log level to ERROR to suppress Spark INFO/WARN logs.")
             return spark
         except Exception as e:
             self.logger.error(f"Error creating Spark session: {e}")
@@ -119,7 +133,7 @@ class RetrieveDataFromMySQLOutside:
 
             # Display schema and some data for verification
             df.printSchema()
-            df.show(50)
+            df.show(5)
 
             return df
 
@@ -127,23 +141,22 @@ class RetrieveDataFromMySQLOutside:
             self.logger.error(f"Error reading data from MySQL: {e}")
             raise
 
-    @staticmethod
-    def k_means(input_df):
+    def k_means(self, input_df):
         # If partitioned, read doesn't work use:
         # df = df.repartition(16)
 
-        print("Checking for missing values in 'measure_name'...")
+        self.logger.info("Checking for missing values in 'measure_name'...")
         null_measure_name_count = input_df.filter(col("measure_name").isNull()).count()
-        print(f"Column 'measure_name' has {null_measure_name_count} missing values")
+        self.logger.info(f"Column 'measure_name' has {null_measure_name_count} missing values")
 
         # Filter out rows where 'measure_name' is null, as it's our clustering target
         input_df = input_df.filter(col("measure_name").isNotNull())
-        print(f"Rows after filtering out missing 'measure_name' values: {input_df.count()}")
+        self.logger.info(f"Rows after filtering out missing 'measure_name' values: {input_df.count()}")
 
         # Use StringIndexer and OneHotEncoder to convert it in numerical features for "measure_name".
         stages = []
 
-        # StringIndexer: Converts 'measure_name' to numerical indices
+        # StringIndexer: Converts 'measure_name' string values to numerical indices
         indexer = StringIndexer(inputCol="measure_name", outputCol="measure_name_index", handleInvalid="keep")
         stages.append(indexer)
 
@@ -171,7 +184,7 @@ class RetrieveDataFromMySQLOutside:
 
         # Create and apply the pipeline
         pipeline = Pipeline(stages=stages)
-        print("Applying feature engineering pipeline...")
+        self.logger.info("Applying feature engineering pipeline...")
         pipeline_model = pipeline.fit(input_df)
         transformed_df = pipeline_model.transform(input_df)
 
@@ -186,7 +199,7 @@ class RetrieveDataFromMySQLOutside:
         kmeans = KMeans().setK(5).setSeed(1)
 
         # Train the K-Means model
-        print("Training K-Means model...")
+        self.logger.info("Training K-Means model...")
         model = kmeans.fit(dataset)
 
         # Save Model
@@ -202,12 +215,12 @@ class RetrieveDataFromMySQLOutside:
             base_dir = os.environ.get("MODEL_OUTPUT_DIR", "/opt/spark/work-dir/models")
             model_path = os.path.join(base_dir, "health_kmeans_model")
             pipeline_path = os.path.join(base_dir, "health_kmeans_pipeline")
-            print(f"Saving K-Means model to {model_path}")
+            self.logger.info(f"Saving K-Means model to {model_path}")
             model.save(model_path)
-            print(f"Saving K-Means pipeline to {pipeline_path}")
+            self.logger.info(f"Saving K-Means pipeline to {pipeline_path}")
             pipeline_model.save(pipeline_path)
         else:
-            print("Skipping model save (set SAVE_MODELS=true to enable).")
+            self.logger.info("Skipping model save (set SAVE_MODELS=true to enable).")
 
     @classmethod
     def main(cls):

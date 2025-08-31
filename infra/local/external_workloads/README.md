@@ -68,6 +68,7 @@ spark-submit \
   --conf spark.driver.bindAddress=0.0.0.0 \
   --conf spark.driver.port=${SPARK_DRIVER_PORT:-7078} \
   --conf spark.blockManager.port=${SPARK_BLOCKMGR_PORT:-7079} \
+  --conf spark.ui.showConsoleProgress=false \
   /workloads/local_cluster_workloads/spark_retrieve_data_outside.py
 ```
 

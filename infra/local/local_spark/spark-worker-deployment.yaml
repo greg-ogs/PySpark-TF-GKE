@@ -5,7 +5,7 @@ metadata:
   labels:
     app: spark-worker
 spec:
-  replicas: 16
+  replicas: 8
   selector:
     matchLabels:
       app: spark-worker
@@ -50,4 +50,5 @@ spec:
         - spark://spark-master:7077
         resources:
           requests:
-            cpu: "500m"
+            cpu: "250m"
+            memory: "512Mi"
