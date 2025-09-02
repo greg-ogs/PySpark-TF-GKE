@@ -1,0 +1,12 @@
+numpy
+pandas
+seaborn
+scikit-image
+scikit-learn
+opencv-python
+mysql-connector-python
+Pillow
+pyspark
+findspark
+huggingface_hub
+tensorflow
