@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tf-trainer
+  labels:
+    app: tf-trainer
+    role: worker
+spec:
+  serviceName: tf-trainer-headless
+  replicas: 2
+  selector:
+    matchLabels:
+      app: tf-trainer
+      role: worker
+  template:
+    metadata:
+      labels:
+        app: tf-trainer
+        role: worker
+    spec:
+      # If you have a dedicated node pool, you can uncomment the following selectors to schedule on it
+      # nodeSelector:
+      #   workload: spark
+      # tolerations:
+      #   - key: "workload"
+      #     operator: "Equal"
+      #     value: "spark"
+      #     effect: "NoSchedule"
+      containers:
+      - name: tf-worker
+        image: tensorflow/tensorflow:2.15.0
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: TF_GRPC_PORT
+          value: "2222"
+        - name: WORKER_REPLICAS
+          value: "2"
+        - name: PS_REPLICAS
+          value: "1"
+        ports:
+        - containerPort: 2222
+          name: tf-grpc
+        command: ["python", "-u", "-c"]
+        args:
+          - |
+            import os, time, re, json
+            import tensorflow as tf
+            from tensorflow.python.training.server_lib import Server
+            port = int(os.getenv('TF_GRPC_PORT','2222'))
+            hostname = os.getenv('HOSTNAME','')
+            m = re.search(r'-([0-9]+)$', hostname)
+            if not m:
+                raise SystemExit('Could not parse ordinal from HOSTNAME=%r' % hostname)
+            task_index = int(m.group(1))
+            # Determine role by hostname pattern similar to MySQL ordinal detection
+            job_name = 'ps' if '-ps-' in hostname else 'worker'
+            worker_replicas = int(os.getenv('WORKER_REPLICAS','1'))
+            ps_replicas = int(os.getenv('PS_REPLICAS','1'))
+            def addr(base, idx):
+                return f"{base}-{idx}.tf-trainer-headless:{port}"
+            workers = [addr('tf-trainer', i) for i in range(worker_replicas)]
+            ps = [addr('tf-trainer-ps', i) for i in range(ps_replicas)]
+            cluster_def = {'worker': workers}
+            if ps_replicas > 0:
+                cluster_def['ps'] = ps
+            print('Computed ClusterSpec:', json.dumps(cluster_def), flush=True)
+            server = Server(tf.train.ClusterSpec(cluster_def), job_name=job_name, task_index=task_index, protocol='grpc')
+            print(f"TensorFlow {job_name} server started on 0.0.0.0:{port} with task_index={task_index}", flush=True)
+            while True:
+                time.sleep(3600)
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
