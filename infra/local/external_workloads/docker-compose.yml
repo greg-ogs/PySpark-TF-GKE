@@ -17,6 +17,7 @@ services:
       - "7079:7079"   # Spark block manager port
     volumes:
       - ../../../workloads:/workloads:rw
+      - ../mysql-database:/data:ro
     command: ["bash", "-lc", "sleep infinity"]
     networks:
       - kind
