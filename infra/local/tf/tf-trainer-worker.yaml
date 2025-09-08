@@ -6,7 +6,7 @@ metadata:
     app: tf-trainer
     role: worker
 spec:
-  serviceName: tf-trainer-headless
+  serviceName: tf-trainer-worker-headless
   replicas: 2
   selector:
     matchLabels:
@@ -28,7 +28,7 @@ spec:
       #     effect: "NoSchedule"
       containers:
       - name: tf-worker
-        image: tensorflow/tensorflow:2.15.0
+        image: tensorflow/tensorflow:latest-gpu
         imagePullPolicy: IfNotPresent
         env:
         - name: TF_GRPC_PORT
@@ -56,10 +56,8 @@ spec:
             job_name = 'ps' if '-ps-' in hostname else 'worker'
             worker_replicas = int(os.getenv('WORKER_REPLICAS','1'))
             ps_replicas = int(os.getenv('PS_REPLICAS','1'))
-            def addr(base, idx):
-                return f"{base}-{idx}.tf-trainer-headless:{port}"
-            workers = [addr('tf-trainer', i) for i in range(worker_replicas)]
-            ps = [addr('tf-trainer-ps', i) for i in range(ps_replicas)]
+            workers = [f"tf-trainer-{i}.tf-trainer-worker-headless:{port}" for i in range(worker_replicas)]
+            ps = [f"tf-trainer-ps-{i}.tf-trainer-ps-headless:{port}" for i in range(ps_replicas)]
             cluster_def = {'worker': workers}
             if ps_replicas > 0:
                 cluster_def['ps'] = ps

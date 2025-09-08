@@ -1,13 +1,30 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: tf-trainer-headless
+  name: tf-trainer-worker-headless
   labels:
     app: tf-trainer
 spec:
   clusterIP: None
   selector:
     app: tf-trainer
+    role: worker
+  ports:
+  - name: tf-grpc
+    port: 2222
+    targetPort: 2222
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tf-trainer-ps-headless
+  labels:
+    app: tf-trainer
+spec:
+  clusterIP: None
+  selector:
+    app: tf-trainer
+    role: ps
   ports:
   - name: tf-grpc
     port: 2222
@@ -44,6 +61,22 @@ spec:
   selector:
     app: tf-trainer
     statefulset.kubernetes.io/pod-name: tf-trainer-1
+  ports:
+  - name: tf-grpc
+    port: 2222
+    targetPort: 2222
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tf-trainer-ps-0
+  labels:
+    app: tf-trainer
+spec:
+  type: LoadBalancer
+  selector:
+    app: tf-trainer
+    statefulset.kubernetes.io/pod-name: tf-trainer-ps-0
   ports:
   - name: tf-grpc
     port: 2222
