@@ -22,6 +22,21 @@ services:
     networks:
       - kind
 
+  tf-bastion:
+    image: gregogs/cuda:workers-v1.0
+    container_name: tf-bastion-external
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../../../workloads:/workloads:rw
+      - ../mysql-database:/data:ro
+      - ../tf/config-kind-in-container:/root/.kube/config:ro
+    environment:
+      - KUBECONFIG=/root/.kube/config
+    command: [ "bash", "-lc", "sleep infinity" ]
+    networks:
+      - kind
+
 networks:
   kind:
     external: true

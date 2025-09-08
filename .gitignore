@@ -2,3 +2,5 @@
 **/.gcp/**/*.json
 *.terraform*
 *tfstate*
+
+*config-kind-in-container*
