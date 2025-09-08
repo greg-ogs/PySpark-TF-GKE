@@ -122,8 +122,6 @@ def make_parameter_server_strategy(worker_replicas: int, ps_replicas: int, port:
 
     resolver = tf.distribute.cluster_resolver.SimpleClusterResolver(
         cluster_spec=tf.train.ClusterSpec(cluster_def),
-        task_type="chief",
-        task_id=0,
         rpc_layer="grpc",
     )
     variable_partitioner = tf.distribute.experimental.partitioners.MinSizePartitioner(
@@ -177,17 +175,62 @@ def run_training(
             print("PS addrs:", ps_addrs)
         strategy = make_parameter_server_strategy(worker_replicas, ps_replicas, port, worker_addrs, ps_addrs)
 
-        # DatasetCreator lets Keras coordinate dataset distribution for PS strategy
-        def dataset_fn(input_context: tf.distribute.InputContext):
+        # Switch to ClusterCoordinator-based custom training loop (DatasetCreator removed)
+        def per_worker_dataset_fn(input_context: Optional[tf.distribute.InputContext] = None):
             local_ds = tf.data.Dataset.from_tensor_slices((X, y))
-            local_ds = local_ds.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
+            if input_context is not None:
+                local_ds = local_ds.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
             local_ds = local_ds.shuffle(buffer_size=min(10000, len(X))).batch(batch_size).repeat()
             return local_ds
 
         with strategy.scope():
             model = build_sequential_model(input_dim, num_classes)
-        creator = tf.keras.utils.experimental.DatasetCreator(dataset_fn)
-        history = model.fit(creator, epochs=epochs, steps_per_epoch=steps_per_epoch)
+            # Build losses/optimizer/metrics explicitly for custom loop
+            optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+            loss_obj = tf.keras.losses.SparseCategoricalCrossentropy()
+            train_acc = tf.keras.metrics.SparseCategoricalAccuracy()
+            train_loss = tf.keras.metrics.Mean()
+
+        # Create a ClusterCoordinator to drive training from the chief/coordinator process
+        coordinator = tf.distribute.coordinator.ClusterCoordinator(strategy)
+        per_worker_ds = coordinator.create_per_worker_dataset(per_worker_dataset_fn)
+        per_worker_iter = iter(per_worker_ds)
+
+        @tf.function
+        def per_worker_train_step(iterator):
+            def step_fn(inputs):
+                features, labels = inputs
+                with tf.GradientTape() as tape:
+                    logits = model(features, training=True)
+                    loss = loss_obj(labels, logits)
+                    # Add possible regularization losses
+                    loss += tf.add_n(model.losses) if model.losses else 0.0
+                grads = tape.gradient(loss, model.trainable_variables)
+                optimizer.apply_gradients(zip(grads, model.trainable_variables))
+                train_acc.update_state(labels, logits)
+                train_loss.update_state(loss)
+                return loss
+
+            return strategy.run(step_fn, args=(next(iterator),))
+
+        # Training loop
+        for epoch in range(epochs):
+            print(f"Starting epoch {epoch+1}/{epochs}...")
+            train_acc.reset_state()
+            train_loss.reset_state()
+
+            # Schedule one step per required step_per_epoch; wait for completion
+            futures = []
+            for _ in range(steps_per_epoch):
+                f = coordinator.schedule(per_worker_train_step, args=(per_worker_iter,))
+                futures.append(f)
+            # Block until all scheduled steps finish
+            coordinator.join()
+
+            print(f"Epoch {epoch+1} - loss: {train_loss.result().numpy():.4f} - accuracy: {train_acc.result().numpy():.4f}")
+
+        # Mimic Keras History-like output for downstream logging
+        history = type("_H", (), {"history": {"accuracy": [train_acc.result().numpy()]}})()
     else:
         print("Running single-process (no distributed strategy).")
         model = build_sequential_model(input_dim, num_classes)
