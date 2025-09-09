@@ -33,6 +33,8 @@ services:
       - ../tf/config-kind-in-container:/root/.kube/config:ro
     environment:
       - KUBECONFIG=/root/.kube/config
+    ports:
+      - "2223:2223"   # TensorFlow coordinator gRPC port
     command: [ "bash", "-lc", "sleep infinity" ]
     networks:
       - kind

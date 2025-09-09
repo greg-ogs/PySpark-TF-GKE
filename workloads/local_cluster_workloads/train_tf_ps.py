@@ -7,6 +7,10 @@ import sys
 import time
 from typing import List, Tuple, Optional
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf.runtime_version')
+
 import numpy as np
 import tensorflow as tf
 from urllib.request import urlopen
@@ -100,7 +104,7 @@ def build_sequential_model(input_dim: int, num_classes: int) -> tf.keras.Model:
 # Distributed strategy helpers
 # ----------------------------
 
-def build_cluster_def(worker_replicas: int, ps_replicas: int, port: int, worker_addrs: Optional[List[str]] = None, ps_addrs: Optional[List[str]] = None) -> dict:
+def build_cluster_def(worker_replicas: int, ps_replicas: int, port: int, worker_addrs: Optional[List[str]] = None, ps_addrs: Optional[List[str]] = None, chief_addr: Optional[str] = None, chief_port: int = 2223) -> dict:
     # If explicit addresses provided (e.g., from bastion via LoadBalancer IPs), use them
     if worker_addrs:
         workers = worker_addrs
@@ -113,12 +117,42 @@ def build_cluster_def(worker_replicas: int, ps_replicas: int, port: int, worker_
         else:
             ps = [f"tf-trainer-ps-{i}.tf-trainer-ps-headless:{port}" for i in range(ps_replicas)]
         cluster_def["ps"] = ps
+    # Include chief if provided (must be routable from the K8s pods)
+    if chief_addr:
+        cluster_def["chief"] = [f"{chief_addr}:{chief_port}"]
     return cluster_def
 
 
-def make_parameter_server_strategy(worker_replicas: int, ps_replicas: int, port: int = 2222, worker_addrs: Optional[List[str]] = None, ps_addrs: Optional[List[str]] = None) -> tf.distribute.ParameterServerStrategy:
-    cluster_def = build_cluster_def(worker_replicas, ps_replicas, port, worker_addrs, ps_addrs)
+def make_parameter_server_strategy(worker_replicas: int, ps_replicas: int, port: int = 2222, worker_addrs: Optional[List[str]] = None, ps_addrs: Optional[List[str]] = None, chief_addr: Optional[str] = None, chief_port: int = 2223) -> tf.distribute.ParameterServerStrategy:
+    cluster_def = build_cluster_def(worker_replicas, ps_replicas, port, worker_addrs, ps_addrs, chief_addr, chief_port)
     print("Computed ClusterSpec:", json.dumps(cluster_def), flush=True)
+
+    # Basic validation and sanitization for chief address to avoid IPv6 and malformed inputs
+    if chief_addr:
+        # Reject IPv6 literals or bracketed addresses and any scheme prefixes
+        if ":" in chief_addr and "." not in chief_addr:
+            raise RuntimeError(
+                f"chief_addr appears to be IPv6 ('{chief_addr}'). Please provide an IPv4 address reachable from K8s pods."
+            )
+        if any(sym in chief_addr for sym in ["/", "[", "]", " "]):
+            raise RuntimeError(
+                f"chief_addr '{chief_addr}' is malformed. Provide a raw IPv4 like 192.168.1.10 without scheme or brackets."
+            )
+        # Optional strict IPv4 check
+        parts = chief_addr.split(".")
+        if len(parts) != 4 or any(not p.isdigit() or not (0 <= int(p) <= 255) for p in parts):
+            raise RuntimeError(
+                f"chief_addr '{chief_addr}' is not a valid IPv4 address."
+            )
+
+    # If a chief address is provided, declare this process as chief via TF_CONFIG
+    if chief_addr:
+        tf_config = {
+            "cluster": cluster_def,
+            "task": {"type": "chief", "index": 0},
+        }
+        os.environ["TF_CONFIG"] = json.dumps(tf_config)
+        print("TF_CONFIG set:", os.environ["TF_CONFIG"], flush=True)
 
     resolver = tf.distribute.cluster_resolver.SimpleClusterResolver(
         cluster_spec=tf.train.ClusterSpec(cluster_def),
@@ -148,6 +182,8 @@ def run_training(
     port: int = 2222,
     worker_addrs: Optional[List[str]] = None,
     ps_addrs: Optional[List[str]] = None,
+    chief_addr: Optional[str] = None,
+    chief_port: int = 2223,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
@@ -173,7 +209,7 @@ def run_training(
             print("Worker addrs:", worker_addrs)
         if ps_addrs:
             print("PS addrs:", ps_addrs)
-        strategy = make_parameter_server_strategy(worker_replicas, ps_replicas, port, worker_addrs, ps_addrs)
+        strategy = make_parameter_server_strategy(worker_replicas, ps_replicas, port, worker_addrs, ps_addrs, chief_addr, chief_port)
 
         # Switch to ClusterCoordinator-based custom training loop (DatasetCreator removed)
         def per_worker_dataset_fn(input_context: Optional[tf.distribute.InputContext] = None):
@@ -237,7 +273,7 @@ def run_training(
         history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
 
     # Save model
-    save_path = os.path.join(output_dir, "model")
+    save_path = os.path.join(output_dir, "model.keras")
     model.save(save_path)
     print(f"Model saved to: {save_path}")
 
@@ -250,7 +286,7 @@ def parse_args(argv: List[str]):
     parser = argparse.ArgumentParser(description="Train TF Keras model on health.csv with optional ParameterServerStrategy")
     parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "infra/local/mysql-database/health.csv"), help="Path to CSV (when running on bastion/host)")
     parser.add_argument("--data-url", default=os.environ.get("DATA_URL", ""), help="HTTP(S) URL to CSV (used inside cluster if path not mounted)")
-    parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", "/tmp/tf-model"))
+    parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", "./tf-model"))
     parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "3")))
     parser.add_argument("--batch-size", type=int, default=int(os.environ.get("BATCH_SIZE", "64")))
     parser.add_argument("--use-ps", action="store_true", help="Enable ParameterServerStrategy coordinator mode")
@@ -259,12 +295,14 @@ def parse_args(argv: List[str]):
     parser.add_argument("--port", type=int, default=int(os.environ.get("TF_GRPC_PORT", "2222")))
     parser.add_argument("--worker-addrs", default=os.environ.get("WORKER_ADDRS", ""), help="Comma-separated worker addresses (host:port) when running outside cluster")
     parser.add_argument("--ps-addrs", default=os.environ.get("PS_ADDRS", ""), help="Comma-separated ps addresses (host:port) when running outside cluster")
+    parser.add_argument("--chief-addr", default=os.environ.get("CHIEF_ADDR", ""), help="Routable IPv4 address of the coordinator (bastion) accessible from K8s pods")
+    parser.add_argument("--chief-port", type=int, default=int(os.environ.get("CHIEF_PORT", "2223")), help="Coordinator gRPC port (exposed on tf-bastion)")
     return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
     args = parse_args(sys.argv[1:])
-
+    input("Press enter to continue...")
     # Resolve data source: prefer local path; if not existent and data-url provided -> use URL
     data_source = args.data_path
     if not os.path.exists(data_source):
@@ -288,4 +326,6 @@ if __name__ == "__main__":
         port=args.port,
         worker_addrs=worker_addrs,
         ps_addrs=ps_addrs,
+        chief_addr=(args.chief_addr if args.chief_addr else None),
+        chief_port=args.chief_port,
     )

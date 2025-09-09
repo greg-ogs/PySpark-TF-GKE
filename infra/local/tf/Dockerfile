@@ -1,5 +1,6 @@
 FROM tensorflow/tensorflow:latest-gpu
 LABEL authors="greg-ogs"
+# For bastion container outside the kubernetes cluster
 
 RUN apt-get update && apt-get install -y apt-transport-https ca-certificates curl gnupg
 
