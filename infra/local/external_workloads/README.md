@@ -90,3 +90,16 @@ export DB_TABLE=health_disparities
 - You can view the Spark master UI at http://localhost:8080.
 
 # Second service: Run TensorFlow coordinator outside Kubernetes using Docker Compose
+
+To install metrics in the kubernetes cluster and use `kubectl top` command, run:
+
+```
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl edit deployment metrics-server -n kube-system
+```
+And add `- --kubelet-insecure-tls` before image definition in the manifest.
+
+The lve stream command is:
+```
+while ($true) { Clear-Host; kubectl top pods -n default; Start-Sleep -Seconds 2 }
+```

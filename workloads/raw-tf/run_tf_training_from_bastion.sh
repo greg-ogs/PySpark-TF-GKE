@@ -12,7 +12,7 @@ PS_SERVICE="tf-trainer-ps-0"
 PORT=2222
 DATA_PATH=${DATA_PATH:-/data/health.csv}
 OUTPUT_DIR=${OUTPUT_DIR:-/workloads/output/$(date +%Y%m%d_%H%M%S)}
-EPOCHS=${EPOCHS:-3}
+EPOCHS=${EPOCHS:-10}
 BATCH_SIZE=${BATCH_SIZE:-64}
 CHIEF_PORT=${CHIEF_PORT:-2223}
 # Determine a routable IPv4 for the coordinator (bastion). Respect CHIEF_ADDR if provided.
