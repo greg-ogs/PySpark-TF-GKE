@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Database connection parameters
 DB_CONFIG = {
-    'host': 'localhost',
+    'host': '172.18.255.203', # service mysql-external external ip
     'port': "3306",
     'user': 'root',
     'password': '',  # Empty password as per configuration
@@ -27,7 +27,7 @@ DB_CONFIG = {
 }
 
 # CSV file path
-CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'health.csv')
+CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'datasets/csvs/health.csv')
 
 def create_database_if_not_exists(connection):
     """Create the database if it doesn't exist."""
