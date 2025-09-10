@@ -6,7 +6,7 @@ kubectl -n metallb-system wait deploy --all --for=condition=Available --timeout=
 
 docker network inspect kind --format '{{json .IPAM.Config}}'
 
-kubectl apply -f ./infra/local/tf/metallb-adreess-pool.yaml
+kubectl apply -f ./infra/local/raw-tf/metallb/metallb-adreess-pool.yaml
 
 # For the container kubectl using kind
 

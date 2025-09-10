@@ -29,8 +29,8 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ../../../workloads:/workloads:rw
-      - ../mysql-database:/data:ro
-      - ../tf/config-kind-in-container:/root/.kube/config:ro
+      - ../mysql-database/datasets/csvs/health.csv:/data/health.csv:ro
+      - ../raw-tf/config-kind-in-container:/root/.kube/config:ro
     environment:
       - KUBECONFIG=/root/.kube/config
     ports:

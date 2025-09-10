@@ -117,7 +117,7 @@ else
 fi
 export no_proxy NO_PROXY
 
-"$PYTHON" /workloads/local_cluster_workloads/train_tf_ps.py \
+"$PYTHON" /workloads/raw-tf/train_tf_ps.py \
   --data-path "$DATA_PATH" \
   --output-dir "$OUTPUT_DIR" \
   --epochs "$EPOCHS" \

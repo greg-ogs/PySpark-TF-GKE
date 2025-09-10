@@ -1,4 +1,4 @@
-# Run Spark driver outside Kubernetes using Docker Compose
+# First service: Run Spark driver outside Kubernetes using Docker Compose
 
 This setup lets you run the Spark driver ("bastion") outside your local Kubernetes cluster, while executing against the Spark master and workers inside the cluster. The container includes Python deps and the MySQL JDBC driver.
 
@@ -88,3 +88,5 @@ export DB_TABLE=health_disparities
 - Use host.docker.internal so the container can reach services port-forwarded on the host.
 - Ensure port-forward terminals remain open during your run.
 - You can view the Spark master UI at http://localhost:8080.
+
+# Second service: Run TensorFlow coordinator outside Kubernetes using Docker Compose
