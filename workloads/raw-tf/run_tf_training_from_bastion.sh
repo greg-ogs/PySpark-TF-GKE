@@ -7,36 +7,47 @@ set -u
 # and launches the training coordinator that parallelizes across the K8s pods.
 
 # Config
-WORKER_SERVICES="tf-trainer-0 tf-trainer-1"
-PS_SERVICE="tf-trainer-ps-0"
+WORKER_SERVICES="tf-trainer-0 tf-trainer-1" # Add all the worker services
+PS_SERVICE="tf-trainer-ps-0" # Add the Ps services
 PORT=2222
+# Default values for the environment variables
 DATA_PATH=${DATA_PATH:-/data/health.csv}
 OUTPUT_DIR=${OUTPUT_DIR:-/workloads/output/$(date +%Y%m%d_%H%M%S)}
 EPOCHS=${EPOCHS:-10}
 BATCH_SIZE=${BATCH_SIZE:-64}
-CHIEF_PORT=${CHIEF_PORT:-2223}
+CHIEF_PORT=${CHIEF_PORT:-2223} # TensorFlow coordinator gRPC port; the tf-bastion also called chief
+
 # Determine a routable IPv4 for the coordinator (bastion). Respect CHIEF_ADDR if provided.
-if [ -z "${CHIEF_ADDR:-}" ]; then
+if [ -z "${CHIEF_ADDR:-}" ]; then # Check if the variable has not been set (not set or empty), then
+                                  # execute the second if
+
   # Try to detect default IPv4 via routing table
-  if command -v ip >/dev/null 2>&1; then
+  if command -v ip >/dev/null 2>&1; then # Check if the command ip is available
+    # Using the ip V4 (-4) get the route to google dns, send error output to null, pipe the successfully output to awk
+    # to iterate into the fields with length NF amd take the word after "src".
     CANDIDATE=$(ip -4 route get 8.8.8.8 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')
+    # Check if the command return is none-empty (-n)
     if [ -n "$CANDIDATE" ]; then
       CHIEF_ADDR="$CANDIDATE"
     fi
   fi
 fi
-if [ -z "${CHIEF_ADDR:-}" ]; then
+# In case of fail
+if [ -z "${CHIEF_ADDR:-}" ]; then # If the variable was not set in the previous if-fi block
   # Fallback: hostname -I (capital i) and pick first IPv4 token
-  if command -v hostname >/dev/null 2>&1; then
-    for tok in $(hostname -I 2>/dev/null); do
+  if command -v hostname >/dev/null 2>&1; then # Check if the command is available
+    for tok in $(hostname -I 2>/dev/null); do # Iterate all the ip addresses of the host (hostname -I)
+                                              # and error output -> Null
       case "$tok" in
-        *:*) ;; # skip IPv6 tokens
-        *.*) CHIEF_ADDR="$tok"; break ;;
+        *:*) ;; # Skip IPv6 tokens (ips matching ":")
+        *.*) CHIEF_ADDR="$tok"; break ;; #  Is only required the fist ip V4  address, so, skip the rest.
       esac
     done
   fi
 fi
-# Final validation: must be IPv4 (avoid IPv6 which breaks TF_CONFIG host:port handling)
+
+# Final validation: must be IPv4, check not null or empty (True if empty or null) || the environment variable is an
+# ip V6 (: instead . )
 if [ -z "${CHIEF_ADDR:-}" ] || echo "$CHIEF_ADDR" | grep -q ":"; then
   echo "Unable to auto-detect a valid IPv4 CHIEF_ADDR. Set CHIEF_ADDR to an IPv4 reachable from K8s pods (e.g., 172.x/192.168.x)." >&2
   exit 4
@@ -86,20 +97,13 @@ echo "PS $PS_SERVICE -> ${PS_IP}:${PORT}"
 
 # Ensure python exists; prefer python then python3
 PYTHON=""
-if command -v python >/dev/null 2>&1; then
+if command -v python >/dev/null 2>&1; then # Error to std output
   PYTHON=python
-elif command -v python3 >/dev/null 2>&1; then
+elif command -v python3 >/dev/null 2>&1; then # Error to std output
   PYTHON=python3
 else
-  echo "Python is required inside bastion. Aborting." >&2
-  exit 3
-fi
-
-# Install TensorFlow if missing
-if ! "$PYTHON" -c "import tensorflow as tf; print(tf.__version__)" >/dev/null 2>&1; then
-  echo "Installing TensorFlow (CPU) inside bastion container..."
-  "$PYTHON" -m pip install --no-cache-dir --upgrade pip >/dev/null 2>&1 || true
-  "$PYTHON" -m pip install --no-cache-dir tensorflow >/dev/null
+  echo "Python is required inside bastion. Aborting." >&2 # Send to std error output
+  exit 127
 fi
 
 mkdir -p "$OUTPUT_DIR"
