@@ -156,6 +156,7 @@ def build_sequential_model(input_dim: int, num_classes: int) -> tf.keras.Model:
             tf.keras.layers.Input(shape=(input_dim,)),
             tf.keras.layers.Dense(64, activation="relu"),
             tf.keras.layers.Dense(32, activation="relu"),
+            tf.keras.layers.Dense(16, activation="relu"),
             tf.keras.layers.Dense(num_classes, activation="softmax"),
         ]
     )
@@ -171,41 +172,107 @@ def build_sequential_model(input_dim: int, num_classes: int) -> tf.keras.Model:
 # Distributed strategy helpers
 # ----------------------------
 
-def build_cluster_def(worker_replicas: int, ps_replicas: int, port: int, worker_addrs: Optional[List[str]] = None, ps_addrs: Optional[List[str]] = None, chief_addr: Optional[str] = None, chief_port: int = 2223) -> dict:
+def build_cluster_def(worker_replicas: int, ps_replicas: int, port: int, worker_addrs: Optional[List[str]] = None,
+                      ps_addrs: Optional[List[str]] = None, chief_addr: Optional[str] = None,
+                      chief_port: int = 2223) -> dict:
+    """
+    Builds and returns a TensorFlow cluster definition based on the number of worker replicas,
+    parameter server replicas, and chief address (if provided).
+
+    If no explicit addresses are provided, default Kubernetes headless service naming conventions
+    are used to generate the respective addresses.
+    This allows the creation of a valid cluster configuration for distributed TensorFlow training.
+
+    Params:
+    -------
+    worker_replicas : int -> The number of worker replicas in the cluster.
+
+    ps_replicas : int -> The number of parameter server replicas in the cluster.
+
+    port : int -> The port used by the workers and parameter servers for communication.
+
+    worker_addrs : Optional[List[str]] -> A list of explicit addresses for the worker nodes. Default is None.
+
+    ps_addrs : Optional[List[str]] -> A list of explicit addresses for the parameter server nodes. Default is None.
+
+    chief_addr : Optional[str] -> An explicit address for the chief node. Default is None.
+
+    chief_port : int -> The port used by the chief node for communication. Default is 2223.
+
+    :return : dict -> A dictionary defining the cluster structure, containing address mappings for
+        worker nodes, parameter servers, and the chief if provided.
+
+    """
+
     # If explicit addresses provided (e.g., from bastion via LoadBalancer IPs), use them
     if worker_addrs:
         workers = worker_addrs
     else:
+        # In case of no worker's argument is provided, use the default headless service name
         workers = [f"tf-trainer-{i}.tf-trainer-worker-headless:{port}" for i in range(worker_replicas)]
+    # define a role for the workers
     cluster_def = {"worker": workers}
+    # Now is the same for the parameter servers pods
     if ps_replicas > 0:
         if ps_addrs:
             ps = ps_addrs
         else:
             ps = [f"tf-trainer-ps-{i}.tf-trainer-ps-headless:{port}" for i in range(ps_replicas)]
+        # define role for the parameter servers
         cluster_def["ps"] = ps
-    # Include chief if provided (must be routable from the K8s pods)
+
+    # Include chief if provided (must be routable from the K8s pods), check the run_tf_training_from_bastion.sh script.
     if chief_addr:
         cluster_def["chief"] = [f"{chief_addr}:{chief_port}"]
     return cluster_def
 
 
-def make_parameter_server_strategy(worker_replicas: int, ps_replicas: int, port: int = 2222, worker_addrs: Optional[List[str]] = None, ps_addrs: Optional[List[str]] = None, chief_addr: Optional[str] = None, chief_port: int = 2223) -> tf.distribute.ParameterServerStrategy:
-    cluster_def = build_cluster_def(worker_replicas, ps_replicas, port, worker_addrs, ps_addrs, chief_addr, chief_port)
-    print("Computed ClusterSpec:", json.dumps(cluster_def), flush=True)
+def make_parameter_server_strategy(worker_replicas: int, ps_replicas: int, port: int = 2222,
+                                   worker_addrs: Optional[List[str]] = None, ps_addrs: Optional[List[str]] = None,
+                                   chief_addr: Optional[str] = None,
+                                   chief_port: int = 2223) -> tf.distribute.ParameterServerStrategy:
+    """
+    Creates and configures a TensorFlow Parameter Server Strategy.
 
-    # Basic validation and sanitization for chief address to avoid IPv6 and malformed inputs
+    This function sets up a distributed training strategy using `tf.distribute.ParameterServerStrategy`.
+    It builds a cluster definition based on the provided number of worker and parameter
+    server replicas, network addresses, and chief address/port. Basic validation is applied to ensure
+    the provided chief address is a valid and appropriate IPv4 address without unwanted schemes, brackets,
+    or malformed formats. If a chief address is provided, a corresponding `TF_CONFIG` environment variable
+    is set up to indicate that this process is running as the chief.
+
+    Params:
+    -------
+
+    worker_replicas : int -> Number of worker replicas in the cluster. Must be an integer.
+    ps_replicas : int -> Number of parameter server replicas in the cluster. Must be an integer.
+    port : int -> Default port number to use for worker and parameter server addresses. Defaults to 2222.
+    worker_addrs : Optional[List[str]] -> List of IPv4 addresses corresponding to the workers. If not provided, defaults to None.
+    ps_addrs : Optional[List[str]] -> List of IPv4 addresses corresponding to the parameter servers. If not provided, defaults to None.
+    chief_addr : Optional[str] -> IPv4 address of the chief server. Must be a valid and reachable IPv4 address. Defaults to None.
+    chief_port : int -> Default port number for the chief server. Defaults to 2223.
+
+    :return : tf.distribute.ParameterServerStrategy -> A `tf.distribute.ParameterServerStrategy` configured for distributed training.
+
+    """
+
+    # Build cluster definition based on provided addresses and replica counts
+    cluster_def = build_cluster_def(worker_replicas, ps_replicas, port, worker_addrs, ps_addrs, chief_addr, chief_port)
+    print("Computed ClusterSpec:", json.dumps(cluster_def), flush=True) # print cluster definition inmediately
+
+    # Basic validation and sanitization for the chief address to avoid IPv6 and malformed inputs
     if chief_addr:
         # Reject IPv6 literals or bracketed addresses and any scheme prefixes
         if ":" in chief_addr and "." not in chief_addr:
             raise RuntimeError(
                 f"chief_addr appears to be IPv6 ('{chief_addr}'). Please provide an IPv4 address reachable from K8s pods."
             )
+        # Creates an iterable for any function to check if any of the symbols are in the string
         if any(sym in chief_addr for sym in ["/", "[", "]", " "]):
             raise RuntimeError(
                 f"chief_addr '{chief_addr}' is malformed. Provide a raw IPv4 like 192.168.1.10 without scheme or brackets."
             )
-        # Optional strict IPv4 check
+        # Strict IPv4 check
         parts = chief_addr.split(".")
         if len(parts) != 4 or any(not p.isdigit() or not (0 <= int(p) <= 255) for p in parts):
             raise RuntimeError(
@@ -252,6 +319,49 @@ def run_training(
     chief_addr: Optional[str] = None,
     chief_port: int = 2223,
 ) -> None:
+    """
+    Executes the training pipeline for a machine learning model, supporting both
+    single-machine and distributed strategies, including parameter server
+    orchestrated training. It preprocesses the dataset, builds the model, trains
+    it over specified epochs, and saves the resultant model along with a label
+    mapping file.
+
+    :param data_source: Path to the input dataset (CSV format) containing features
+        and labels for training.
+    :type data_source: str
+    :param output_dir: Directory where output artifacts, including the model and
+        label map, are saved.
+    :type output_dir: str
+    :param epochs: The number of epochs the training process will iterate.
+    :type epochs: int
+    :param batch_size: Number of samples processed per training batch.
+    :type batch_size: int
+    :param use_parameter_server: Specifies whether distributed training with
+        parameter servers is utilized.
+    :type use_parameter_server: bool
+    :param worker_replicas: Number of worker replicas used in distributed
+        training.
+    :type worker_replicas: int
+    :param ps_replicas: Number of parameter server replicas used in distribution
+        training.
+    :type ps_replicas: int
+    :param port: Default port used for communication in distributed training
+        (e.g., workers and parameter servers).
+    :type port: int
+    :param worker_addrs: List of addresses for worker nodes in distributed
+        training.
+    :type worker_addrs: Optional[List[str]]
+    :param ps_addrs: List of addresses for parameter servers in distributed
+        training.
+    :type ps_addrs: Optional[List[str]]
+    :param chief_addr: Address of the chief node (coordinator) in distributed
+        training.
+    :type chief_addr: Optional[str]
+    :param chief_port: Default port used for the chief node communication during
+        distributed training.
+    :type chief_port: int
+    :return: None
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Loading dataset from: {data_source}")
@@ -263,14 +373,14 @@ def run_training(
     with open(os.path.join(output_dir, "label_map.json"), "w", encoding="utf-8") as fh:
         json.dump({int(i): s for i, s in enumerate(label_vocab)}, fh, ensure_ascii=False, indent=2)
 
-    # Build dataset
-    ds = tf.data.Dataset.from_tensor_slices((X, y))
-    # Shuffle with a modest buffer to avoid huge memory in coordinator
+    # Build dataset for single-process training (no coordinator)
+    ds = tf.data.Dataset.from_tensor_slices((X, y)) # Format for the dataset (features, labels)
+    # Shuffle with a modest buffer to avoid huge memory in coordinator and repeat
     ds = ds.shuffle(buffer_size=min(10000, len(X))).batch(batch_size).repeat()
 
     steps_per_epoch = max(1, len(X) // batch_size)
 
-    if use_parameter_server and (worker_replicas > 0):
+    if use_parameter_server and (worker_replicas > 0): # Environment variable to select if ps strategy is applied
         print("Using ParameterServerStrategy with workers and ps.")
         if worker_addrs:
             print("Worker addrs:", worker_addrs)
@@ -278,7 +388,7 @@ def run_training(
             print("PS addrs:", ps_addrs)
         strategy = make_parameter_server_strategy(worker_replicas, ps_replicas, port, worker_addrs, ps_addrs, chief_addr, chief_port)
 
-        # Switch to ClusterCoordinator-based custom training loop (DatasetCreator removed)
+        # Dataset per worker function (for parameter server strategy and coordinator mode)
         def per_worker_dataset_fn(input_context: Optional[tf.distribute.InputContext] = None):
             local_ds = tf.data.Dataset.from_tensor_slices((X, y))
             if input_context is not None:
@@ -289,7 +399,7 @@ def run_training(
         with strategy.scope():
             model = build_sequential_model(input_dim, num_classes)
             # Build losses/optimizer/metrics explicitly for custom loop
-            optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
+            optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
             loss_obj = tf.keras.losses.SparseCategoricalCrossentropy()
             train_acc = tf.keras.metrics.SparseCategoricalAccuracy()
             train_loss = tf.keras.metrics.Mean()
@@ -299,7 +409,7 @@ def run_training(
         per_worker_ds = coordinator.create_per_worker_dataset(per_worker_dataset_fn)
         per_worker_iter = iter(per_worker_ds)
 
-        @tf.function
+        @tf.function # Optimized tf function.
         def per_worker_train_step(iterator):
             def step_fn(inputs):
                 features, labels = inputs
@@ -324,7 +434,7 @@ def run_training(
 
             # Schedule one step per required step_per_epoch; wait for completion
             futures = []
-            for _ in range(steps_per_epoch):
+            for _ in range(steps_per_epoch): # Steps per epoch
                 f = coordinator.schedule(per_worker_train_step, args=(per_worker_iter,))
                 futures.append(f)
             # Block until all scheduled steps finish
