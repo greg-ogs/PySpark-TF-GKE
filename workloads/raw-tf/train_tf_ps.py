@@ -55,7 +55,7 @@ def _open_text(path_or_url: str) -> io.TextIOBase:
     or "https://", the method assumes it's a URL and fetches the content using
     an HTTP request.
     Otherwise, it opens a local file with the specified path.
-    Used inside the load_health_csv function.
+    Used inside the load_csv function.
 
     Params:
     -------
@@ -69,7 +69,7 @@ def _open_text(path_or_url: str) -> io.TextIOBase:
     return open(path_or_url, "r", encoding="utf-8") # If is a local file, open it directly
 
 
-def load_health_csv(
+def load_csv(
     source: str,
     numeric_features: Optional[List[str]] = None,
     label_col: str = "subpopulation",
@@ -255,7 +255,7 @@ def run_training(
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Loading dataset from: {data_source}")
-    X, y, label_vocab = load_health_csv(data_source)
+    X, y, label_vocab = load_csv(data_source)
     num_classes = int(np.max(y)) + 1
     input_dim = X.shape[1]
 
@@ -370,7 +370,7 @@ def parse_args(argv: List[str]):
 if __name__ == "__main__":
     args = parse_args(sys.argv[1:])
     input("Press enter to continue...")
-    # Resolve data source: prefer local path; if not existent and data-url provided -> use URL
+    # Resolve data source: prefer a local path; if not existent and data-url provided -> use URL
     data_source = args.data_path
 
     worker_addrs = [s.strip() for s in args.worker_addrs.split(",") if s.strip()] if args.worker_addrs else None
