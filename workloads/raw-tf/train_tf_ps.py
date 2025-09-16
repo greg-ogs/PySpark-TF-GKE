@@ -1,13 +1,40 @@
+"""
+A script for loading health dataset, building machine learning models, and managing distributed strategies.
+
+This script includes utility functions for loading and processing health-related CSV files, creating
+TensorFlow models, configuring distributed training strategies, and running the training workflow.
+It uses the TensorFlow framework and its distributed capabilities for training models in parameter server or local
+environments.
+
+Modules:
+--------
+    - Data loading utilities.
+    - Model building helpers.
+    - Distributed strategy configuration and management.
+    - Training logic implementation.
+
+Imports:
+--------
+    argparse -> for arguments parsing from the sh startup script.
+
+    typing -> For type annotations.
+
+
+"""
 import argparse
 import csv
 import io
 import json
 import os
 import sys
-import time
 from typing import List, Tuple, Optional
 
+# TensorFlow-specific setting to reduce the amount of logging output, hiding INFO and WARNING
+# and only showing ERROR.
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+# Optional:
+# suppresses a specific UserWarning that can arise from protobuf versions, cleaning up the console output.
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf.runtime_version')
 
@@ -21,9 +48,25 @@ from urllib.request import urlopen
 # ----------------------------
 
 def _open_text(path_or_url: str) -> io.TextIOBase:
+    """
+    Opens a text file or retrieves text content from an HTTP/HTTPS URL and
+    returns a readable text stream.
+    If the input string starts with "http://"
+    or "https://", the method assumes it's a URL and fetches the content using
+    an HTTP request.
+    Otherwise, it opens a local file with the specified path.
+    Used inside the load_health_csv function.
+
+    Params:
+    -------
+
+    path_or_url : str -> A string representing either a file path or a URL.
+
+    return : io.TextIOBase -> A readable text stream from the local file or the remote resource.
+    """
     if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
-        return io.TextIOWrapper(urlopen(path_or_url), encoding="utf-8")
-    return open(path_or_url, "r", encoding="utf-8")
+        return io.TextIOWrapper(urlopen(path_or_url), encoding="utf-8") # If is a URL, open it using HTTP request
+    return open(path_or_url, "r", encoding="utf-8") # If is a local file, open it directly
 
 
 def load_health_csv(
@@ -32,35 +75,58 @@ def load_health_csv(
     label_col: str = "subpopulation",
 ) -> Tuple[np.ndarray, np.ndarray, List[str]]:
     """
-    Load CSV into memory using Python CSV module (keeps dependencies minimal).
+    Load a CSV file into memory and parse it into a usable format.
+    This function uses Python's CSV module to minimize dependencies and processes the data to return
+    numeric features (X), label indices (y_idx), and the label vocabulary (label_vocab).
+    It is specifically designed for health-related datasets, with default numeric features
+    and a specific label column.
+    Rows with missing or invalid data are skipped.
 
-    Returns: X (float32 numpy), y_idx (int32 numpy), label_vocab (list of str)
+    Params:
+    -------
+
+    source : str -> Path to the source CSV file.
+
+    numeric_features : Optional[List[str]] -> List of column names to parse as numeric features.
+    Defaults:
+        to ["value", "lower_ci", "upper_ci"] if not provided.
+
+    label_col : str -> Name of the column to use for labels in the dataset.
+    Defaults:
+        to "subpopulation".
+
+    :return: A tuple containing:
+        - X (numpy.ndarray): Parsed numeric features as a float32 numpy array.
+        - y_idx (numpy.ndarray): Label indices encoded as an int32 numpy array.
+        - label_vocab (List[str]): A sorted list of unique label names.
+    :rtype: Tuple[numpy.ndarray, numpy.ndarray, List[str]]
     """
     if numeric_features is None:
-        numeric_features = ["value", "lower_ci", "upper_ci"]
+        numeric_features = ["value", "lower_ci", "upper_ci"] # Numeric features from example dataset (google health)
 
     X: List[List[float]] = []
     y_raw: List[str] = []
 
     with _open_text(source) as fh:
-        reader = csv.DictReader(fh)
-        for row in reader:
+        reader = csv.DictReader(fh) # Read CSV as dicts
+        for row in reader: # Iterate over rows in the CSV, each row is a dict with the header as keys.
             try:
-                label = row.get(label_col, "").strip()
-                # Skip rows without label
+                label = row.get(label_col, "").strip() # Get the label from the row for the label_col
+                # (default: "subpopulation"), default to empty string if not found.
                 if not label:
-                    continue
+                    continue # Skip rows without a label in the subpopulation column.
+
                 # Parse numeric features; skip rows with missing/invalid
-                feats = []
-                ok = True
-                for c in numeric_features:
-                    v = row.get(c, "").strip()
+                feats = [] # Auxiliar list to store numeric features for this row.
+                ok = True # Flag to indicate if the row is valid.
+                for c in numeric_features: # Iterate over the numeric features.
+                    v = row.get(c, "").strip() # Get the value for the current feature.
                     if v == "" or v.lower() == "nan":
                         ok = False
-                        break
+                        break # Skip rows with any missing or invalid numeric feature values
                     feats.append(float(v))
                 if not ok:
-                    continue
+                    continue # If any of the numeric features are invalid, skip the row and don't add it to X or y_raw
                 X.append(feats)
                 y_raw.append(label)
             except Exception:
@@ -71,9 +137,10 @@ def load_health_csv(
         raise RuntimeError("No valid rows were parsed from the dataset.")
 
     # Build label vocabulary and index encode
-    vocab = sorted(set(y_raw))
-    index_map = {s: i for i, s in enumerate(vocab)}
-    y_idx = np.array([index_map[s] for s in y_raw], dtype=np.int32)
+    vocab = sorted(set(y_raw)) # Use set to remove duplicates and sort for determinism.
+    index_map = {s: i for i, s in enumerate(vocab)} # Dict to map unique labels to indices.
+    y_idx = np.array([index_map[s] for s in y_raw], dtype=np.int32) # Iterates over y_raw and uses index_map to encode
+    # the labels. Each value in y_raw (s) is mapped to the corresponding index_map[s].
     X_arr = np.asarray(X, dtype=np.float32)
 
     return X_arr, y_idx, vocab
@@ -284,7 +351,7 @@ def run_training(
 
 def parse_args(argv: List[str]):
     parser = argparse.ArgumentParser(description="Train TF Keras model on health.csv with optional ParameterServerStrategy")
-    parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "infra/local/mysql-database/health.csv"), help="Path to CSV (when running on bastion/host)")
+    parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "/app/infra/local/mysql-database/datasets/csvs/health.csv"), help="Path to CSV (when running on bastion/host)")
     parser.add_argument("--data-url", default=os.environ.get("DATA_URL", ""), help="HTTP(S) URL to CSV (used inside cluster if path not mounted)")
     parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", "./tf-model"))
     parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "3")))
@@ -305,12 +372,6 @@ if __name__ == "__main__":
     input("Press enter to continue...")
     # Resolve data source: prefer local path; if not existent and data-url provided -> use URL
     data_source = args.data_path
-    if not os.path.exists(data_source):
-        if args.data_url:
-            data_source = args.data_url
-        else:
-            print(f"Data path {args.data_path} not found and no --data-url provided.", file=sys.stderr)
-            sys.exit(2)
 
     worker_addrs = [s.strip() for s in args.worker_addrs.split(",") if s.strip()] if args.worker_addrs else None
     ps_addrs = [s.strip() for s in args.ps_addrs.split(",") if s.strip()] if args.ps_addrs else None
