@@ -168,6 +168,33 @@ def build_sequential_model(input_dim: int, num_classes: int) -> tf.keras.Model:
     return model
 
 
+def build_cnn_model(input_shape: Tuple[int, int, int], num_classes: int) -> tf.keras.Model:
+    """
+    Build a compact CNN suitable for training on small image datasets.
+    input_shape is (height, width, channels).
+    """
+    model = tf.keras.Sequential(
+        [
+            tf.keras.layers.Input(shape=input_shape),
+            tf.keras.layers.Rescaling(1.0 / 255.0),
+            tf.keras.layers.Conv2D(32, 3, activation="relu", padding="same"),
+            tf.keras.layers.MaxPooling2D(),
+            tf.keras.layers.Conv2D(64, 3, activation="relu", padding="same"),
+            tf.keras.layers.MaxPooling2D(),
+            tf.keras.layers.Conv2D(128, 3, activation="relu", padding="same"),
+            tf.keras.layers.GlobalAveragePooling2D(),
+            tf.keras.layers.Dense(64, activation="relu"),
+            tf.keras.layers.Dense(num_classes, activation="softmax"),
+        ]
+    )
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        metrics=["accuracy"],
+    )
+    return model
+
+
 # ----------------------------
 # Distributed strategy helpers
 # ----------------------------
@@ -299,6 +326,57 @@ def make_parameter_server_strategy(worker_replicas: int, ps_replicas: int, port:
         cluster_resolver=resolver, variable_partitioner=variable_partitioner
     )
     return strategy
+
+
+# ----------------------------
+# Image dataset helpers
+# ----------------------------
+
+def _list_image_classes(data_dir: str) -> List[str]:
+    """Return sorted class names from immediate subdirectories in data_dir."""
+    if not os.path.isdir(data_dir):
+        raise RuntimeError(f"'{data_dir}' is not a directory")
+    classes = [d for d in sorted(os.listdir(data_dir)) if os.path.isdir(os.path.join(data_dir, d))]
+    if not classes:
+        raise RuntimeError("No class subfolders found. Expected 'folder per class' structure.")
+    return classes
+
+
+def _count_images(data_dir: str) -> int:
+    exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".ppm"}
+    total = 0
+    for cls in _list_image_classes(data_dir):
+        cls_dir = os.path.join(data_dir, cls)
+        for name in os.listdir(cls_dir):
+            _, ext = os.path.splitext(name.lower())
+            if ext in exts:
+                total += 1
+    if total == 0:
+        raise RuntimeError("No images found under the provided directory.")
+    return total
+
+
+def _make_image_dataset(
+    data_dir: str,
+    image_size: Tuple[int, int],
+    batch_size: int,
+    shuffle: bool = True,
+    input_context: Optional[tf.distribute.InputContext] = None,
+) -> tf.data.Dataset:
+    """Create a tf.data.Dataset from a folder-per-class directory."""
+    ds = tf.keras.utils.image_dataset_from_directory(
+        data_dir,
+        labels="inferred",
+        label_mode="int",
+        image_size=image_size,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        seed=1337,
+    )
+    if input_context is not None:
+        ds = ds.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
+    ds = ds.repeat().prefetch(tf.data.AUTOTUNE)
+    return ds
 
 
 # ----------------------------
@@ -459,10 +537,126 @@ def run_training(
     print(f"Final training accuracy: {final_acc}")
 
 
+def run_image_training(
+    data_dir: str,
+    output_dir: str,
+    epochs: int,
+    batch_size: int,
+    use_parameter_server: bool,
+    worker_replicas: int,
+    ps_replicas: int,
+    img_height: int,
+    img_width: int,
+    port: int = 2222,
+    worker_addrs: Optional[List[str]] = None,
+    ps_addrs: Optional[List[str]] = None,
+    chief_addr: Optional[str] = None,
+    chief_port: int = 2223,
+) -> None:
+    """
+    Train a CNN model on an image dataset organized as folder-per-class.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    classes = _list_image_classes(data_dir)
+    num_classes = len(classes)
+    input_shape = (img_height, img_width, 3)
+
+    # Save label map
+    with open(os.path.join(output_dir, "label_map.json"), "w", encoding="utf-8") as fh:
+        json.dump({int(i): s for i, s in enumerate(classes)}, fh, ensure_ascii=False, indent=2)
+
+    steps_per_epoch = max(1, _count_images(data_dir) // batch_size)
+
+    if use_parameter_server and (worker_replicas > 0):
+        print("Using ParameterServerStrategy with workers and ps for image training.")
+        if worker_addrs:
+            print("Worker addrs:", worker_addrs)
+        if ps_addrs:
+            print("PS addrs:", ps_addrs)
+        strategy = make_parameter_server_strategy(
+            worker_replicas, ps_replicas, port, worker_addrs, ps_addrs, chief_addr, chief_port
+        )
+
+        def per_worker_dataset_fn(input_context: Optional[tf.distribute.InputContext] = None):
+            return _make_image_dataset(
+                data_dir=data_dir,
+                image_size=(img_height, img_width),
+                batch_size=batch_size,
+                shuffle=True,
+                input_context=input_context,
+            )
+
+        with strategy.scope():
+            model = build_cnn_model(input_shape, num_classes)
+            optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
+            loss_obj = tf.keras.losses.SparseCategoricalCrossentropy()
+            train_acc = tf.keras.metrics.SparseCategoricalAccuracy()
+            train_loss = tf.keras.metrics.Mean()
+
+        coordinator = tf.distribute.coordinator.ClusterCoordinator(strategy)
+        per_worker_ds = coordinator.create_per_worker_dataset(per_worker_dataset_fn)
+        per_worker_iter = iter(per_worker_ds)
+
+        @tf.function
+        def per_worker_train_step(iterator):
+            def step_fn(inputs):
+                features, labels = inputs
+                with tf.GradientTape() as tape:
+                    logits = model(features, training=True)
+                    loss = loss_obj(labels, logits)
+                    loss += tf.add_n(model.losses) if model.losses else 0.0
+                grads = tape.gradient(loss, model.trainable_variables)
+                optimizer.apply_gradients(zip(grads, model.trainable_variables))
+                train_acc.update_state(labels, logits)
+                train_loss.update_state(loss)
+                return loss
+
+            return strategy.run(step_fn, args=(next(iterator),))
+
+        for epoch in range(epochs):
+            print(f"Starting epoch {epoch+1}/{epochs}...")
+            train_acc.reset_state()
+            train_loss.reset_state()
+
+            futures = []
+            for _ in range(steps_per_epoch):
+                f = coordinator.schedule(per_worker_train_step, args=(per_worker_iter,))
+                futures.append(f)
+            coordinator.join()
+
+            print(
+                f"Epoch {epoch+1} - loss: {train_loss.result().numpy():.4f} - accuracy: {train_acc.result().numpy():.4f}"
+            )
+
+        history = type("_H", (), {"history": {"accuracy": [train_acc.result().numpy()]}})()
+    else:
+        print("Running single-process image training.")
+        ds = _make_image_dataset(
+            data_dir=data_dir,
+            image_size=(img_height, img_width),
+            batch_size=batch_size,
+            shuffle=True,
+            input_context=None,
+        )
+        model = build_cnn_model(input_shape, num_classes)
+        history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
+
+    save_path = os.path.join(output_dir, "model.keras")
+    model.save(save_path)
+    print(f"Model saved to: {save_path}")
+
+    final_acc = history.history.get("accuracy", [None])[-1]
+    print(f"Final training accuracy: {final_acc}")
+
+
 def parse_args(argv: List[str]):
-    parser = argparse.ArgumentParser(description="Train TF Keras model on health.csv with optional ParameterServerStrategy")
-    parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "/app/infra/local/mysql-database/datasets/csvs/health.csv"), help="Path to CSV (when running on bastion/host)")
+    parser = argparse.ArgumentParser(description="Train TF Keras model on CSV or images (folder-per-class) with optional ParameterServerStrategy")
+    parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "/app/infra/local/mysql-database/datasets/image-datasets/flower_photos"), help="Path to CSV or image root directory")
     parser.add_argument("--data-url", default=os.environ.get("DATA_URL", ""), help="HTTP(S) URL to CSV (used inside cluster if path not mounted)")
+    parser.add_argument("--data-is-images", action="store_false", help="Treat data-path as folder-per-class image dataset")
+    parser.add_argument("--img-height", type=int, default=int(os.environ.get("IMG_HEIGHT", "180")), help="Image height for resizing")
+    parser.add_argument("--img-width", type=int, default=int(os.environ.get("IMG_WIDTH", "180")), help="Image width for resizing")
     parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", "./tf-model"))
     parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "3")))
     parser.add_argument("--batch-size", type=int, default=int(os.environ.get("BATCH_SIZE", "64")))
@@ -480,23 +674,43 @@ def parse_args(argv: List[str]):
 if __name__ == "__main__":
     args = parse_args(sys.argv[1:])
     input("Press enter to continue...")
-    # Resolve data source: prefer a local path; if not existent and data-url provided -> use URL
+    # Resolve data source
     data_source = args.data_path
 
     worker_addrs = [s.strip() for s in args.worker_addrs.split(",") if s.strip()] if args.worker_addrs else None
     ps_addrs = [s.strip() for s in args.ps_addrs.split(",") if s.strip()] if args.ps_addrs else None
 
-    run_training(
-        data_source=data_source,
-        output_dir=args.output_dir,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        use_parameter_server=args.use_ps,
-        worker_replicas=args.worker_replicas,
-        ps_replicas=args.ps_replicas,
-        port=args.port,
-        worker_addrs=worker_addrs,
-        ps_addrs=ps_addrs,
-        chief_addr=(args.chief_addr if args.chief_addr else None),
-        chief_port=args.chief_port,
-    )
+    is_image_mode = bool(args.data_is_images) or os.path.isdir(data_source)
+
+    if is_image_mode:
+        run_image_training(
+            data_dir=data_source,
+            output_dir=args.output_dir,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            use_parameter_server=args.use_ps,
+            worker_replicas=args.worker_replicas,
+            ps_replicas=args.ps_replicas,
+            img_height=args.img_height,
+            img_width=args.img_width,
+            port=args.port,
+            worker_addrs=worker_addrs,
+            ps_addrs=ps_addrs,
+            chief_addr=(args.chief_addr if args.chief_addr else None),
+            chief_port=args.chief_port,
+        )
+    else:
+        run_training(
+            data_source=data_source,
+            output_dir=args.output_dir,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            use_parameter_server=args.use_ps,
+            worker_replicas=args.worker_replicas,
+            ps_replicas=args.ps_replicas,
+            port=args.port,
+            worker_addrs=worker_addrs,
+            ps_addrs=ps_addrs,
+            chief_addr=(args.chief_addr if args.chief_addr else None),
+            chief_port=args.chief_port,
+        )
