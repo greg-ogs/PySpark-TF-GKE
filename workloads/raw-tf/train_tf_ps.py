@@ -1,7 +1,7 @@
 """
-A script for loading health dataset, building machine learning models, and managing distributed strategies.
+A script for loading a dataset, building machine learning models, and managing distributed strategies.
 
-This script includes utility functions for loading and processing health-related CSV files, creating
+This script includes utility functions for loading and processing CSV files or image datasets, creating
 TensorFlow models, configuring distributed training strategies, and running the training workflow.
 It uses the TensorFlow framework and its distributed capabilities for training models in parameter server or local
 environments.
@@ -43,11 +43,11 @@ import tensorflow as tf
 from urllib.request import urlopen
 
 
-# ----------------------------
-# Utility: Data loading
-# ----------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+# Utility: CSV data helpers (load)
+# ----------------------------------------------------------------------------------------------------------------------
 
-def _open_text(path_or_url: str) -> io.TextIOBase:
+def open_text(path_or_url: str) -> io.TextIOBase:
     """
     Opens a text file or retrieves text content from an HTTP/HTTPS URL and
     returns a readable text stream.
@@ -107,7 +107,7 @@ def load_csv(
     X: List[List[float]] = []
     y_raw: List[str] = []
 
-    with _open_text(source) as fh:
+    with open_text(source) as fh:
         reader = csv.DictReader(fh) # Read CSV as dicts
         for row in reader: # Iterate over rows in the CSV, each row is a dict with the header as keys.
             try:
@@ -145,12 +145,95 @@ def load_csv(
 
     return X_arr, y_idx, vocab
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Utility: Image dataset helpers (load)
+# ----------------------------------------------------------------------------------------------------------------------
+
+def list_image_classes(data_dir: str) -> List[str]:
+    """
+    Lists image classes by finding subdirectories within the given directory.
+    Each subdirectory is considered as representing one class.
+    Ensures the provided directory exists and contains subdirectories following a 'folder per class' structure.
+
+    Params:
+    -------
+
+    data_dir : str -> Path to the directory containing class subfolders.
+
+    return : List[str] ->List of class names, represented as subfolder names.
+
+    raises RuntimeError: If the specified directory does not exist or is not a directory.
+    raises RuntimeError: If no subdirectories (class folders) are found in the provided directory.
+    """
+    if not os.path.isdir(data_dir):
+        raise RuntimeError(f"'{data_dir}' is not a directory")
+    classes = [d for d in sorted(os.listdir(data_dir)) if os.path.isdir(os.path.join(data_dir, d))]
+    if not classes:
+        raise RuntimeError("No class subfolders found. Expected 'folder per class' structure.")
+    return classes
+
+
+def count_images(data_dir: str) -> int:
+    """
+    Counts the total number of image files in the given directory, including all its
+    subdirectories, based on specific file extensions. Supported file extensions are:
+    ``.jpg``, ``.jpeg``, ``.png``, ``.bmp``, ``.gif``, ``.ppm``.
+
+    The main implementation of the ``count_images`` function is for the step size in the model training.
+    'steps_per_epoch = max(1, _count_images(data_dir) // batch_size)'
+
+    Raises a ``RuntimeError`` if no images are found under the provided directory.
+
+    Params:
+    -------
+
+    data_dir : str -> The root directory containing subdirectories of image classes
+
+    return : int -> The total count of image files found in the directory
+
+    raises RuntimeError: If no images are found in the provided directory
+    """
+    exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".ppm"}
+    total = 0
+    for clss in list_image_classes(data_dir):
+        cls_dir = os.path.join(data_dir, clss)
+        for name in os.listdir(cls_dir):
+            _, ext = os.path.splitext(name.lower())
+            if ext in exts:
+                total += 1
+    if total == 0:
+        raise RuntimeError("No images found under the provided directory.")
+    return total
+
+
+def make_image_dataset(
+        data_dir: str,
+        image_size: Tuple[int, int],
+        batch_size: int,
+        shuffle: bool = True,
+        input_context: Optional[tf.distribute.InputContext] = None,
+) -> tf.data.Dataset:
+    """Create a tf.data.Dataset from a folder-per-class directory."""
+    ds = tf.keras.utils.image_dataset_from_directory(
+        data_dir,
+        labels="inferred",
+        label_mode="int",
+        image_size=image_size,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        seed=1337,
+    )
+    if input_context is not None:
+        ds = ds.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
+    ds = ds.repeat().prefetch(tf.data.AUTOTUNE)
+    return ds
+
 
 # ----------------------------
 # Model building
 # ----------------------------
 
-def build_sequential_model(input_dim: int, num_classes: int) -> tf.keras.Model:
+def build_deep_model(input_dim: int, num_classes: int) -> tf.keras.Model:
     model = tf.keras.Sequential(
         [
             tf.keras.layers.Input(shape=(input_dim,)),
@@ -169,10 +252,6 @@ def build_sequential_model(input_dim: int, num_classes: int) -> tf.keras.Model:
 
 
 def build_cnn_model(input_shape: Tuple[int, int, int], num_classes: int) -> tf.keras.Model:
-    """
-    Build a compact CNN suitable for training on small image datasets.
-    input_shape is (height, width, channels).
-    """
     model = tf.keras.Sequential(
         [
             tf.keras.layers.Input(shape=input_shape),
@@ -327,63 +406,11 @@ def make_parameter_server_strategy(worker_replicas: int, ps_replicas: int, port:
     )
     return strategy
 
-
-# ----------------------------
-# Image dataset helpers
-# ----------------------------
-
-def _list_image_classes(data_dir: str) -> List[str]:
-    """Return sorted class names from immediate subdirectories in data_dir."""
-    if not os.path.isdir(data_dir):
-        raise RuntimeError(f"'{data_dir}' is not a directory")
-    classes = [d for d in sorted(os.listdir(data_dir)) if os.path.isdir(os.path.join(data_dir, d))]
-    if not classes:
-        raise RuntimeError("No class subfolders found. Expected 'folder per class' structure.")
-    return classes
-
-
-def _count_images(data_dir: str) -> int:
-    exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".ppm"}
-    total = 0
-    for cls in _list_image_classes(data_dir):
-        cls_dir = os.path.join(data_dir, cls)
-        for name in os.listdir(cls_dir):
-            _, ext = os.path.splitext(name.lower())
-            if ext in exts:
-                total += 1
-    if total == 0:
-        raise RuntimeError("No images found under the provided directory.")
-    return total
-
-
-def _make_image_dataset(
-    data_dir: str,
-    image_size: Tuple[int, int],
-    batch_size: int,
-    shuffle: bool = True,
-    input_context: Optional[tf.distribute.InputContext] = None,
-) -> tf.data.Dataset:
-    """Create a tf.data.Dataset from a folder-per-class directory."""
-    ds = tf.keras.utils.image_dataset_from_directory(
-        data_dir,
-        labels="inferred",
-        label_mode="int",
-        image_size=image_size,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        seed=1337,
-    )
-    if input_context is not None:
-        ds = ds.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
-    ds = ds.repeat().prefetch(tf.data.AUTOTUNE)
-    return ds
-
-
 # ----------------------------
 # Training logic
 # ----------------------------
 
-def run_training(
+def run_deep_training(
     data_source: str,
     output_dir: str,
     epochs: int,
@@ -451,11 +478,6 @@ def run_training(
     with open(os.path.join(output_dir, "label_map.json"), "w", encoding="utf-8") as fh:
         json.dump({int(i): s for i, s in enumerate(label_vocab)}, fh, ensure_ascii=False, indent=2)
 
-    # Build dataset for single-process training (no coordinator)
-    ds = tf.data.Dataset.from_tensor_slices((X, y)) # Format for the dataset (features, labels)
-    # Shuffle with a modest buffer to avoid huge memory in coordinator and repeat
-    ds = ds.shuffle(buffer_size=min(10000, len(X))).batch(batch_size).repeat()
-
     steps_per_epoch = max(1, len(X) // batch_size)
 
     if use_parameter_server and (worker_replicas > 0): # Environment variable to select if ps strategy is applied
@@ -475,7 +497,7 @@ def run_training(
             return local_ds
 
         with strategy.scope():
-            model = build_sequential_model(input_dim, num_classes)
+            model = build_deep_model(input_dim, num_classes)
             # Build losses/optimizer/metrics explicitly for custom loop
             optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
             loss_obj = tf.keras.losses.SparseCategoricalCrossentropy()
@@ -524,7 +546,11 @@ def run_training(
         history = type("_H", (), {"history": {"accuracy": [train_acc.result().numpy()]}})()
     else:
         print("Running single-process (no distributed strategy).")
-        model = build_sequential_model(input_dim, num_classes)
+        # Build dataset for single-process training (no coordinator)
+        ds = tf.data.Dataset.from_tensor_slices((X, y))  # Format for the dataset (features, labels)
+        # Shuffle with a modest buffer to avoid huge memory in coordinator and repeat
+        ds = ds.shuffle(buffer_size=min(10000, len(X))).batch(batch_size).repeat()
+        model = build_deep_model(input_dim, num_classes)
         history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
 
     # Save model
@@ -558,7 +584,7 @@ def run_image_training(
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    classes = _list_image_classes(data_dir)
+    classes = list_image_classes(data_dir)
     num_classes = len(classes)
     input_shape = (img_height, img_width, 3)
 
@@ -566,7 +592,7 @@ def run_image_training(
     with open(os.path.join(output_dir, "label_map.json"), "w", encoding="utf-8") as fh:
         json.dump({int(i): s for i, s in enumerate(classes)}, fh, ensure_ascii=False, indent=2)
 
-    steps_per_epoch = max(1, _count_images(data_dir) // batch_size)
+    steps_per_epoch = max(1, count_images(data_dir) // batch_size)
 
     if use_parameter_server and (worker_replicas > 0):
         print("Using ParameterServerStrategy with workers and ps for image training.")
@@ -579,7 +605,7 @@ def run_image_training(
         )
 
         def per_worker_dataset_fn(input_context: Optional[tf.distribute.InputContext] = None):
-            return _make_image_dataset(
+            return make_image_dataset(
                 data_dir=data_dir,
                 image_size=(img_height, img_width),
                 batch_size=batch_size,
@@ -632,7 +658,7 @@ def run_image_training(
         history = type("_H", (), {"history": {"accuracy": [train_acc.result().numpy()]}})()
     else:
         print("Running single-process image training.")
-        ds = _make_image_dataset(
+        ds = make_image_dataset(
             data_dir=data_dir,
             image_size=(img_height, img_width),
             batch_size=batch_size,
@@ -653,12 +679,12 @@ def run_image_training(
 def parse_args(argv: List[str]):
     parser = argparse.ArgumentParser(description="Train TF Keras model on CSV or images (folder-per-class) with optional ParameterServerStrategy")
     parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "/app/infra/local/mysql-database/datasets/image-datasets/flower_photos"), help="Path to CSV or image root directory")
-    parser.add_argument("--data-url", default=os.environ.get("DATA_URL", ""), help="HTTP(S) URL to CSV (used inside cluster if path not mounted)")
+    parser.add_argument("--data-url", default=os.environ.get("DATA_URL", "/app/infra/local/mysql-database/datasets/csvs/health.csv"), help="HTTP(S) URL to CSV (used inside cluster if path not mounted)")
     parser.add_argument("--data-is-images", action="store_false", help="Treat data-path as folder-per-class image dataset")
     parser.add_argument("--img-height", type=int, default=int(os.environ.get("IMG_HEIGHT", "180")), help="Image height for resizing")
     parser.add_argument("--img-width", type=int, default=int(os.environ.get("IMG_WIDTH", "180")), help="Image width for resizing")
     parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", "./tf-model"))
-    parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "3")))
+    parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "10")))
     parser.add_argument("--batch-size", type=int, default=int(os.environ.get("BATCH_SIZE", "64")))
     parser.add_argument("--use-ps", action="store_true", help="Enable ParameterServerStrategy coordinator mode")
     parser.add_argument("--worker-replicas", type=int, default=int(os.environ.get("WORKER_REPLICAS", "2")))
@@ -676,6 +702,7 @@ if __name__ == "__main__":
     input("Press enter to continue...")
     # Resolve data source
     data_source = args.data_path
+    # data_source = args.data_url
 
     worker_addrs = [s.strip() for s in args.worker_addrs.split(",") if s.strip()] if args.worker_addrs else None
     ps_addrs = [s.strip() for s in args.ps_addrs.split(",") if s.strip()] if args.ps_addrs else None
@@ -700,7 +727,7 @@ if __name__ == "__main__":
             chief_port=args.chief_port,
         )
     else:
-        run_training(
+        run_deep_training(
             data_source=data_source,
             output_dir=args.output_dir,
             epochs=args.epochs,
