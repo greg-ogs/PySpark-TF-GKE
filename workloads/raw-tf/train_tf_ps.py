@@ -323,8 +323,8 @@ def build_deep_model(input_dim: int, num_classes: int) -> tf.keras.Model:
     return model
 
 
-def build_cnn_model(input_shape: Tuple[int, int, int], num_outputs: int = 2) -> tf.keras.Model:
-    """Build a simple CNN regressor that predicts (x_px, y_px) in resized pixels."""
+def build_cnn_model(input_shape: Tuple[int, int, int], num_outputs: int = 2, flat: bool = False) -> tf.keras.Model:
+    """Build a CNN regressor that predicts (x_px, y_px) in resized pixels."""
     model = tf.keras.Sequential(
         [
             tf.keras.layers.Input(shape=input_shape),
@@ -336,9 +336,8 @@ def build_cnn_model(input_shape: Tuple[int, int, int], num_outputs: int = 2) -> 
             tf.keras.layers.MaxPooling2D(),
             tf.keras.layers.Conv2D(128, 3, padding="same"),
             tf.keras.layers.PReLU(),
-            tf.keras.layers.GlobalAveragePooling2D(),
-            # tf.keras.layers.Flatten(),
-            tf.keras.layers.Dense(128, activation="relu"),
+            tf.keras.layers.Flatten() if flat else tf.keras.layers.GlobalAveragePooling2D(),
+            tf.keras.layers.Dense(2592, activation="relu") if flat else tf.keras.layers.Dense(128, activation="relu"),
             tf.keras.layers.Dense(num_outputs, activation="linear"),
         ]
     )
@@ -657,6 +656,7 @@ def run_image_training(
     ps_addrs: Optional[List[str]] = None,
     chief_addr: Optional[str] = None,
     chief_port: int = 2223,
+    flat_layer: bool = False,
 ) -> None:
     """
     Train a CNN regressor to predict (x_px, y_px) in pixels using a flat image
@@ -687,7 +687,7 @@ def run_image_training(
             )
 
         with strategy.scope():
-            model = build_cnn_model(input_shape, num_outputs=2)
+            model = build_cnn_model(input_shape, num_outputs=2, flat=flat_layer)
             optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
             loss_obj = tf.keras.losses.MeanSquaredError()
             train_mae = tf.keras.metrics.MeanAbsoluteError(name="mae")
@@ -742,7 +742,7 @@ def run_image_training(
             shuffle=False,
             input_context=None,
         )
-        model = build_cnn_model(input_shape, num_outputs=2)
+        model = build_cnn_model(input_shape, num_outputs=2, flat=flat_layer,)
         history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
 
     save_path = os.path.join(output_dir, "model.keras")
@@ -804,6 +804,7 @@ if __name__ == "__main__":
             ps_addrs=ps_addrs,
             chief_addr=(args.chief_addr if args.chief_addr else None),
             chief_port=args.chief_port,
+            flat_layer=False,
         )
     else:
         run_deep_training(
