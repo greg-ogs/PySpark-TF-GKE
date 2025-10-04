@@ -151,58 +151,48 @@ def load_csv(
 
 def list_image_classes(data_dir: str) -> List[str]:
     """
-    Lists image classes by finding subdirectories within the given directory.
-    Each subdirectory is considered as representing one class.
-    Ensures the provided directory exists and contains subdirectories following a 'folder per class' structure.
+    Deprecated: Folder-per-class image structure is no longer supported.
 
-    Params:
-    -------
-
-    data_dir : str -> Path to the directory containing class subfolders.
-
-    return : List[str] ->List of class names, represented as subfolder names.
-
-    raises RuntimeError: If the specified directory does not exist or is not a directory.
-    raises RuntimeError: If no subdirectories (class folders) are found in the provided directory.
+    This project now expects a flat directory of images with a labels.jsonl file
+    providing pixel coordinates for each image. This function is kept for
+    backward compatibility but will always raise to prevent accidental use.
     """
-    if not os.path.isdir(data_dir):
-        raise RuntimeError(f"'{data_dir}' is not a directory")
-    classes = [d for d in sorted(os.listdir(data_dir)) if os.path.isdir(os.path.join(data_dir, d))]
-    if not classes:
-        raise RuntimeError("No class subfolders found. Expected 'folder per class' structure.")
-    return classes
+    raise RuntimeError(
+        "Folder-per-class structure is no longer supported. Use labels.jsonl with a flat image directory."
+    )
 
 
 def count_images(data_dir: str) -> int:
     """
-    Counts the total number of image files in the given directory, including all its
-    subdirectories, based on specific file extensions. Supported file extensions are:
-    ``.jpg``, ``.jpeg``, ``.png``, ``.bmp``, ``.gif``, ``.ppm``.
+    Count labeled images using labels.jsonl in a flat directory.
 
-    The main implementation of the ``count_images`` function is for the step size in the model training.
-    'steps_per_epoch = max(1, _count_images(data_dir) // batch_size)'
-
-    Raises a ``RuntimeError`` if no images are found under the provided directory.
-
-    Params:
-    -------
-
-    data_dir : str -> The root directory containing subdirectories of image classes
-
-    return : int -> The total count of image files found in the directory
-
-    raises RuntimeError: If no images are found in the provided directory
+    Only counts entries that both exist on disk and have a supported image
+    extension.
     """
+    labels_path = os.path.join(data_dir, "labels.jsonl")
+    if not os.path.isfile(labels_path):
+        raise RuntimeError(f"labels.jsonl not found in: {data_dir}")
     exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".ppm"}
     total = 0
-    for clss in list_image_classes(data_dir):
-        cls_dir = os.path.join(data_dir, clss)
-        for name in os.listdir(cls_dir):
+    with open(labels_path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            name = str(obj.get("image", "")).strip()
+            if not name:
+                continue
             _, ext = os.path.splitext(name.lower())
-            if ext in exts:
+            if ext not in exts:
+                continue
+            if os.path.isfile(os.path.join(data_dir, name)):
                 total += 1
     if total == 0:
-        raise RuntimeError("No images found under the provided directory.")
+        raise RuntimeError("No labeled images found (labels.jsonl present but matched zero files).")
     return total
 
 
@@ -213,19 +203,101 @@ def make_image_dataset(
         shuffle: bool = True,
         input_context: Optional[tf.distribute.InputContext] = None,
 ) -> tf.data.Dataset:
-    """Create a tf.data.Dataset from a folder-per-class directory."""
-    ds = tf.keras.utils.image_dataset_from_directory(
-        data_dir,
-        labels="inferred",
-        label_mode="int",
-        image_size=image_size,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        seed=1337,
-    )
+    """
+    Create a tf.data.Dataset for regression on (x_px, y_px) from a flat folder of images
+    and a labels.jsonl file.
+
+    - labels.jsonl format (per line):
+      {"image": "<file>", "point": {"x_px": <float>, "y_px": <float>},
+       "image_size": {"width": <int>, "height": <int>}}
+
+    Targets are automatically scaled from original pixel coordinates to the
+    provided resized image_size so the model predicts pixels in the resized
+    space (not normalized). This keeps the target in pixels as requested while
+    matching the actual tensor shape given to the model.
+    """
+    labels_path = os.path.join(data_dir, "labels.jsonl")
+    if not os.path.isfile(labels_path):
+        raise RuntimeError(f"labels.jsonl not found in: {data_dir}")
+
+    img_h, img_w = int(image_size[0]), int(image_size[1])
+
+    filepaths: List[str] = []
+    targets: List[List[float]] = []
+
+    exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".ppm"}
+    with open(labels_path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            name = str(obj.get("image", "")).strip()
+            if not name:
+                continue
+            _, ext = os.path.splitext(name.lower())
+            if ext not in exts:
+                continue
+            full_path = os.path.join(data_dir, name)
+            if not os.path.isfile(full_path):
+                continue
+
+            point = obj.get("point") or {}
+            x_px = point.get("x_px")
+            y_px = point.get("y_px")
+            if x_px is None or y_px is None:
+                continue
+
+            # Is not required because no matter what, the output must be the pixel in original size
+            # img_size = obj.get("image_size") or {}
+            # ow = img_size.get("width")
+            # oh = img_size.get("height")
+            # # If original sizes are missing, fall back to assuming the same as resize
+            # if not ow or not oh:
+            #     ow, oh = img_w, img_h
+            #
+            # # Scale pixel coordinates from original image space to the resized space
+            # sx = float(img_w) / float(ow)
+            # sy = float(img_h) / float(oh)
+            # tx = float(x_px) * sx
+            # ty = float(y_px) * sy
+
+            filepaths.append(full_path)
+            targets.append([x_px, y_px])
+
+    if not filepaths:
+        raise RuntimeError("No valid labeled images were parsed from labels.jsonl")
+
+    # Optionally shuffle at the file list level for better randomness pre-epoch
+    if shuffle:
+        rng = np.random.default_rng(1337)
+        idx = np.arange(len(filepaths))
+        rng.shuffle(idx)
+        filepaths = [filepaths[i] for i in idx]
+        targets = [targets[i] for i in idx]
+
+    fp_ds = tf.data.Dataset.from_tensor_slices(filepaths)
+    y_ds = tf.data.Dataset.from_tensor_slices(tf.convert_to_tensor(targets, dtype=tf.float32))
+    ds = tf.data.Dataset.zip((fp_ds, y_ds))
+
+    def _load_and_preprocess(path, y):
+        img = tf.io.read_file(path)
+        img = tf.image.decode_image(img, channels=3, expand_animations=False)
+        img = tf.image.resize(img, [img_h, img_w])
+        img = tf.cast(img, tf.float32) / 255.0
+        return img, y
+
+    ds = ds.map(_load_and_preprocess, num_parallel_calls=tf.data.AUTOTUNE)
+
     if input_context is not None:
         ds = ds.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
-    ds = ds.repeat().prefetch(tf.data.AUTOTUNE)
+
+    if shuffle:
+        ds = ds.shuffle(buffer_size=min(10000, len(filepaths)))
+    ds = ds.batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
     return ds
 
 
@@ -237,10 +309,10 @@ def build_deep_model(input_dim: int, num_classes: int) -> tf.keras.Model:
     model = tf.keras.Sequential(
         [
             tf.keras.layers.Input(shape=(input_dim,)),
-            tf.keras.layers.Dense(64, activation="relu"),
-            tf.keras.layers.Dense(32, activation="relu"),
             tf.keras.layers.Dense(16, activation="relu"),
-            tf.keras.layers.Dense(num_classes, activation="softmax"),
+            tf.keras.layers.Dense(32, activation="relu"),
+            tf.keras.layers.Dense(64, activation="relu"),
+            tf.keras.layers.Dense(num_classes, activation="softmax"), # Softmax because multiclass classification
         ]
     )
     model.compile(
@@ -251,25 +323,32 @@ def build_deep_model(input_dim: int, num_classes: int) -> tf.keras.Model:
     return model
 
 
-def build_cnn_model(input_shape: Tuple[int, int, int], num_classes: int) -> tf.keras.Model:
+def build_cnn_model(input_shape: Tuple[int, int, int], num_outputs: int = 2) -> tf.keras.Model:
+    """Build a simple CNN regressor that predicts (x_px, y_px) in resized pixels."""
     model = tf.keras.Sequential(
         [
             tf.keras.layers.Input(shape=input_shape),
-            tf.keras.layers.Rescaling(1.0 / 255.0),
-            tf.keras.layers.Conv2D(32, 3, activation="relu", padding="same"),
+            tf.keras.layers.Conv2D(32, 3, padding="same"),
+            tf.keras.layers.PReLU(),
             tf.keras.layers.MaxPooling2D(),
-            tf.keras.layers.Conv2D(64, 3, activation="relu", padding="same"),
+            tf.keras.layers.Conv2D(64, 3, padding="same"),
+            tf.keras.layers.PReLU(),
             tf.keras.layers.MaxPooling2D(),
-            tf.keras.layers.Conv2D(128, 3, activation="relu", padding="same"),
+            tf.keras.layers.Conv2D(128, 3, padding="same"),
+            tf.keras.layers.PReLU(),
             tf.keras.layers.GlobalAveragePooling2D(),
-            tf.keras.layers.Dense(64, activation="relu"),
-            tf.keras.layers.Dense(num_classes, activation="softmax"),
+            # tf.keras.layers.Flatten(),
+            tf.keras.layers.Dense(128, activation="relu"),
+            tf.keras.layers.Dense(num_outputs, activation="linear"),
         ]
     )
+
+    model.summary()
+
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
-        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
-        metrics=["accuracy"],
+        loss=tf.keras.losses.MeanSquaredError(),
+        metrics=[tf.keras.metrics.MeanAbsoluteError(name="mae"), tf.keras.metrics.MeanSquaredError(name="mse")],
     )
     return model
 
@@ -580,18 +659,12 @@ def run_image_training(
     chief_port: int = 2223,
 ) -> None:
     """
-    Train a CNN model on an image dataset organized as folder-per-class.
+    Train a CNN regressor to predict (x_px, y_px) in pixels using a flat image
+    directory and labels.jsonl.
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    classes = list_image_classes(data_dir)
-    num_classes = len(classes)
     input_shape = (img_height, img_width, 3)
-
-    # Save label map
-    with open(os.path.join(output_dir, "label_map.json"), "w", encoding="utf-8") as fh:
-        json.dump({int(i): s for i, s in enumerate(classes)}, fh, ensure_ascii=False, indent=2)
-
     steps_per_epoch = max(1, count_images(data_dir) // batch_size)
 
     if use_parameter_server and (worker_replicas > 0):
@@ -609,16 +682,17 @@ def run_image_training(
                 data_dir=data_dir,
                 image_size=(img_height, img_width),
                 batch_size=batch_size,
-                shuffle=True,
+                shuffle=False,
                 input_context=input_context,
             )
 
         with strategy.scope():
-            model = build_cnn_model(input_shape, num_classes)
+            model = build_cnn_model(input_shape, num_outputs=2)
             optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
-            loss_obj = tf.keras.losses.SparseCategoricalCrossentropy()
-            train_acc = tf.keras.metrics.SparseCategoricalAccuracy()
-            train_loss = tf.keras.metrics.Mean()
+            loss_obj = tf.keras.losses.MeanSquaredError()
+            train_mae = tf.keras.metrics.MeanAbsoluteError(name="mae")
+            train_mse = tf.keras.metrics.MeanSquaredError(name="mse")
+            train_loss = tf.keras.metrics.Mean(name="loss")
 
         coordinator = tf.distribute.coordinator.ClusterCoordinator(strategy)
         per_worker_ds = coordinator.create_per_worker_dataset(per_worker_dataset_fn)
@@ -627,14 +701,15 @@ def run_image_training(
         @tf.function
         def per_worker_train_step(iterator):
             def step_fn(inputs):
-                features, labels = inputs
+                features, labels = inputs  # labels shape: (None, 2)
                 with tf.GradientTape() as tape:
-                    logits = model(features, training=True)
-                    loss = loss_obj(labels, logits)
+                    preds = model(features, training=True)
+                    loss = loss_obj(labels, preds)
                     loss += tf.add_n(model.losses) if model.losses else 0.0
                 grads = tape.gradient(loss, model.trainable_variables)
                 optimizer.apply_gradients(zip(grads, model.trainable_variables))
-                train_acc.update_state(labels, logits)
+                train_mae.update_state(labels, preds)
+                train_mse.update_state(labels, preds)
                 train_loss.update_state(loss)
                 return loss
 
@@ -642,7 +717,8 @@ def run_image_training(
 
         for epoch in range(epochs):
             print(f"Starting epoch {epoch+1}/{epochs}...")
-            train_acc.reset_state()
+            train_mae.reset_state()
+            train_mse.reset_state()
             train_loss.reset_state()
 
             futures = []
@@ -652,39 +728,42 @@ def run_image_training(
             coordinator.join()
 
             print(
-                f"Epoch {epoch+1} - loss: {train_loss.result().numpy():.4f} - accuracy: {train_acc.result().numpy():.4f}"
+                f"Epoch {epoch+1} - loss: {train_loss.result().numpy():.4f} - mae: {train_mae.result().numpy():.4f} - mse: {train_mse.result().numpy():.4f}"
             )
 
-        history = type("_H", (), {"history": {"accuracy": [train_acc.result().numpy()]}})()
+        # Keras History-like
+        history = type("_H", (), {"history": {"mae": [train_mae.result().numpy()], "mse": [train_mse.result().numpy()], "loss": [train_loss.result().numpy()]}})()
     else:
         print("Running single-process image training.")
         ds = make_image_dataset(
             data_dir=data_dir,
             image_size=(img_height, img_width),
             batch_size=batch_size,
-            shuffle=True,
+            shuffle=False,
             input_context=None,
         )
-        model = build_cnn_model(input_shape, num_classes)
+        model = build_cnn_model(input_shape, num_outputs=2)
         history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
 
     save_path = os.path.join(output_dir, "model.keras")
     model.save(save_path)
     print(f"Model saved to: {save_path}")
 
-    final_acc = history.history.get("accuracy", [None])[-1]
-    print(f"Final training accuracy: {final_acc}")
+    final_mae = history.history.get("mae", [None])[-1]
+    final_mse = history.history.get("mse", [None])[-1]
+    final_loss = history.history.get("loss", [None])[-1]
+    print(f"Final training - loss: {final_loss}, mae: {final_mae}, mse: {final_mse}")
 
 
 def parse_args(argv: List[str]):
     parser = argparse.ArgumentParser(description="Train TF Keras model on CSV or images (folder-per-class) with optional ParameterServerStrategy")
-    parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "/app/infra/local/mysql-database/datasets/image-datasets/flower_photos"), help="Path to CSV or image root directory")
+    parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "/app/infra/local/mysql-database/datasets/image-datasets/laser-spots"), help="Path to CSV or image root directory")
     parser.add_argument("--data-url", default=os.environ.get("DATA_URL", "/app/infra/local/mysql-database/datasets/csvs/health.csv"), help="HTTP(S) URL to CSV (used inside cluster if path not mounted)")
     parser.add_argument("--data-is-images", action="store_false", help="Treat data-path as folder-per-class image dataset")
     parser.add_argument("--img-height", type=int, default=int(os.environ.get("IMG_HEIGHT", "180")), help="Image height for resizing")
     parser.add_argument("--img-width", type=int, default=int(os.environ.get("IMG_WIDTH", "180")), help="Image width for resizing")
     parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", "./tf-model"))
-    parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "10")))
+    parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "3")))
     parser.add_argument("--batch-size", type=int, default=int(os.environ.get("BATCH_SIZE", "64")))
     parser.add_argument("--use-ps", action="store_true", help="Enable ParameterServerStrategy coordinator mode")
     parser.add_argument("--worker-replicas", type=int, default=int(os.environ.get("WORKER_REPLICAS", "2")))
