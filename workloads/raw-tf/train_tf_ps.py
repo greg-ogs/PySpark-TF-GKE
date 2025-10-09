@@ -156,25 +156,25 @@ def list_image_classes(data_dir: str) -> List[str]:
     """
     Deprecated: Folder-per-class image structure is no longer supported.
 
-    This project now expects a flat directory of images with a labels.jsonl file
+    This project now expects a flat directory of images with a clean_labels.jsonl file
     providing pixel coordinates for each image. This function is kept for
     backward compatibility but will always raise to prevent accidental use.
     """
     raise RuntimeError(
-        "Folder-per-class structure is no longer supported. Use labels.jsonl with a flat image directory."
+        "Folder-per-class structure is no longer supported. Use clean_labels.jsonl with a flat image directory."
     )
 
 
 def count_images(data_dir: str) -> int:
     """
-    Count labeled images using labels.jsonl in a flat directory.
+    Count labeled images using clean_labels.jsonl in a flat directory.
 
     Only counts entries that both exist on disk and have a supported image
     extension.
     """
-    labels_path = os.path.join(data_dir, "labels.jsonl")
+    labels_path = os.path.join(data_dir, "clean_labels.jsonl")
     if not os.path.isfile(labels_path):
-        raise RuntimeError(f"labels.jsonl not found in: {data_dir}")
+        raise RuntimeError(f"clean_labels.jsonl not found in: {data_dir}")
     exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".ppm"}
     total = 0
     with open(labels_path, "r", encoding="utf-8") as fh:
@@ -195,7 +195,7 @@ def count_images(data_dir: str) -> int:
             if os.path.isfile(os.path.join(data_dir, name)):
                 total += 1
     if total == 0:
-        raise RuntimeError("No labeled images found (labels.jsonl present but matched zero files).")
+        raise RuntimeError("No labeled images found (clean_labels.jsonl present but matched zero files).")
     return total
 
 
@@ -208,9 +208,9 @@ def make_image_dataset(
 ) -> tf.data.Dataset:
     """
     Create a tf.data.Dataset for regression on (x_px, y_px) from a flat folder of images
-    and a labels.jsonl file.
+    and a clean_labels.jsonl file.
 
-    - labels.jsonl format (per line):
+    - clean_labels.jsonl format (per line):
       {"image": "<file>", "point": {"x_px": <float>, "y_px": <float>},
        "image_size": {"width": <int>, "height": <int>}}
 
@@ -219,9 +219,9 @@ def make_image_dataset(
     space (not normalized). This keeps the target in pixels as requested while
     matching the actual tensor shape given to the model.
     """
-    labels_path = os.path.join(data_dir, "labels.jsonl")
+    labels_path = os.path.join(data_dir, "clean_labels.jsonl")
     if not os.path.isfile(labels_path):
-        raise RuntimeError(f"labels.jsonl not found in: {data_dir}")
+        raise RuntimeError(f"clean_labels.jsonl not found in: {data_dir}")
 
     img_h, img_w = int(image_size[0]), int(image_size[1])
 
@@ -272,7 +272,7 @@ def make_image_dataset(
             targets.append([x_px, y_px])
 
     if not filepaths:
-        raise RuntimeError("No valid labeled images were parsed from labels.jsonl")
+        raise RuntimeError("No valid labeled images were parsed from clean_labels.jsonl")
 
     # Optionally shuffle at the file list level for better randomness pre-epoch
     if shuffle:
@@ -663,7 +663,7 @@ def run_image_training(
 ) -> None:
     """
     Train a CNN regressor to predict (x_px, y_px) in pixels using a flat image
-    directory and labels.jsonl.
+    directory and clean_labels.jsonl.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -748,7 +748,8 @@ def run_image_training(
         model = build_cnn_model(input_shape, num_outputs=2, flat=flat_layer,)
         # log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         # tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
-        history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch, callbacks=[tensorboard_callback])
+        # history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch, callbacks=[tensorboard_callback])
+        history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
         plt.plot(history.history['mae'])
         plt.xlabel('epoch')
         plt.show()
