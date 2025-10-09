@@ -23,11 +23,14 @@ Imports:
 """
 import argparse
 import csv
+import datetime
 import io
 import json
 import os
 import sys
 from typing import List, Tuple, Optional
+
+import matplotlib.pyplot as plt
 
 # TensorFlow-specific setting to reduce the amount of logging output, hiding INFO and WARNING
 # and only showing ERROR.
@@ -328,13 +331,13 @@ def build_cnn_model(input_shape: Tuple[int, int, int], num_outputs: int = 2, fla
     model = tf.keras.Sequential(
         [
             tf.keras.layers.Input(shape=input_shape),
-            tf.keras.layers.Conv2D(32, 3, padding="same"),
+            tf.keras.layers.Conv2D(32, 5, padding="same"),
             tf.keras.layers.PReLU(),
             tf.keras.layers.MaxPooling2D(),
-            tf.keras.layers.Conv2D(64, 3, padding="same"),
+            tf.keras.layers.Conv2D(64, 5, padding="same"),
             tf.keras.layers.PReLU(),
             tf.keras.layers.MaxPooling2D(),
-            tf.keras.layers.Conv2D(128, 3, padding="same"),
+            tf.keras.layers.Conv2D(128, 5, padding="same"),
             tf.keras.layers.PReLU(),
             tf.keras.layers.Flatten() if flat else tf.keras.layers.GlobalAveragePooling2D(),
             tf.keras.layers.Dense(2592, activation="relu") if flat else tf.keras.layers.Dense(128, activation="relu"),
@@ -743,7 +746,12 @@ def run_image_training(
             input_context=None,
         )
         model = build_cnn_model(input_shape, num_outputs=2, flat=flat_layer,)
-        history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
+        # log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        # tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
+        history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch, callbacks=[tensorboard_callback])
+        plt.plot(history.history['mae'])
+        plt.xlabel('epoch')
+        plt.show()
 
     save_path = os.path.join(output_dir, "model.keras")
     model.save(save_path)
@@ -760,11 +768,11 @@ def parse_args(argv: List[str]):
     parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "/app/infra/local/mysql-database/datasets/image-datasets/laser-spots"), help="Path to CSV or image root directory")
     parser.add_argument("--data-url", default=os.environ.get("DATA_URL", "/app/infra/local/mysql-database/datasets/csvs/health.csv"), help="HTTP(S) URL to CSV (used inside cluster if path not mounted)")
     parser.add_argument("--data-is-images", action="store_false", help="Treat data-path as folder-per-class image dataset")
-    parser.add_argument("--img-height", type=int, default=int(os.environ.get("IMG_HEIGHT", "180")), help="Image height for resizing")
-    parser.add_argument("--img-width", type=int, default=int(os.environ.get("IMG_WIDTH", "180")), help="Image width for resizing")
+    parser.add_argument("--img-height", type=int, default=int(os.environ.get("IMG_HEIGHT", "256")), help="Image height for resizing")
+    parser.add_argument("--img-width", type=int, default=int(os.environ.get("IMG_WIDTH", "320")), help="Image width for resizing")
     parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", "./tf-model"))
-    parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "3")))
-    parser.add_argument("--batch-size", type=int, default=int(os.environ.get("BATCH_SIZE", "64")))
+    parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "100")))
+    parser.add_argument("--batch-size", type=int, default=int(os.environ.get("BATCH_SIZE", "32")))
     parser.add_argument("--use-ps", action="store_true", help="Enable ParameterServerStrategy coordinator mode")
     parser.add_argument("--worker-replicas", type=int, default=int(os.environ.get("WORKER_REPLICAS", "2")))
     parser.add_argument("--ps-replicas", type=int, default=int(os.environ.get("PS_REPLICAS", "1")))
@@ -777,6 +785,18 @@ def parse_args(argv: List[str]):
 
 
 if __name__ == "__main__":
+    # Configure GPU to prevent out-of-memory errors
+    gpus = tf.config.list_physical_devices("GPU")
+    if gpus:
+        try:
+            # Allow multiple devices to be used
+            tf.config.set_soft_device_placement(True)
+            # Restrict TensorFlow to only allocate memory as needed
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
     args = parse_args(sys.argv[1:])
     input("Press enter to continue...")
     # Resolve data source
