@@ -30,6 +30,6 @@
  100 Epochs
  With 5561 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4060, compute capability: 8.9
  Model using image as input and pixel point (x-y) as output.
- No randomness.
- No validation.
+ With randomness.
+ No validation
  No dropout.

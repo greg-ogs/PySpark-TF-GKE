@@ -299,7 +299,7 @@ def make_image_dataset(
         ds = ds.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
 
     if shuffle:
-        ds = ds.shuffle(buffer_size=min(10000, len(filepaths)))
+        ds = ds.shuffle(buffer_size=min(5000, len(filepaths)))
     ds = ds.batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
     return ds
 
@@ -574,7 +574,7 @@ def run_deep_training(
             local_ds = tf.data.Dataset.from_tensor_slices((X, y))
             if input_context is not None:
                 local_ds = local_ds.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
-            local_ds = local_ds.shuffle(buffer_size=min(10000, len(X))).batch(batch_size).repeat()
+            local_ds = local_ds.shuffle(buffer_size=min(5000, len(X))).batch(batch_size).repeat()
             return local_ds
 
         with strategy.scope():
@@ -630,7 +630,7 @@ def run_deep_training(
         # Build dataset for single-process training (no coordinator)
         ds = tf.data.Dataset.from_tensor_slices((X, y))  # Format for the dataset (features, labels)
         # Shuffle with a modest buffer to avoid huge memory in coordinator and repeat
-        ds = ds.shuffle(buffer_size=min(10000, len(X))).batch(batch_size).repeat()
+        ds = ds.shuffle(buffer_size=min(5000, len(X))).batch(batch_size).repeat()
         model = build_deep_model(input_dim, num_classes)
         history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
 
@@ -685,7 +685,7 @@ def run_image_training(
                 data_dir=data_dir,
                 image_size=(img_height, img_width),
                 batch_size=batch_size,
-                shuffle=False,
+                shuffle=True,
                 input_context=input_context,
             )
 
@@ -742,7 +742,7 @@ def run_image_training(
             data_dir=data_dir,
             image_size=(img_height, img_width),
             batch_size=batch_size,
-            shuffle=False,
+            shuffle=True,
             input_context=None,
         )
         model = build_cnn_model(input_shape, num_outputs=2, flat=flat_layer,)
@@ -772,7 +772,7 @@ def parse_args(argv: List[str]):
     parser.add_argument("--img-height", type=int, default=int(os.environ.get("IMG_HEIGHT", "256")), help="Image height for resizing")
     parser.add_argument("--img-width", type=int, default=int(os.environ.get("IMG_WIDTH", "320")), help="Image width for resizing")
     parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", "./tf-model"))
-    parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "100")))
+    parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "150")))
     parser.add_argument("--batch-size", type=int, default=int(os.environ.get("BATCH_SIZE", "32")))
     parser.add_argument("--use-ps", action="store_true", help="Enable ParameterServerStrategy coordinator mode")
     parser.add_argument("--worker-replicas", type=int, default=int(os.environ.get("WORKER_REPLICAS", "2")))

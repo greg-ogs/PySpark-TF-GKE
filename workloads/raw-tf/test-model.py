@@ -11,12 +11,13 @@ import PIL.Image as im
 
 class ManualImageChecker:
     def __init__(self, image_path: str = "/app/infra/local/mysql-database/datasets/image-datasets/laser-spots"):
-        self.model = tf.keras.models.load_model("./tf-model/160-by-128-model.keras")
+        self.model = tf.keras.models.load_model("./tf-model/100-320-by-256-A1-model.keras")
         self.model.summary()
         self.images_path = image_path
+        self.image_path = None
 
     def predict(self):
-        image = im.open(self.image_path).convert("RGB").resize((160, 128))
+        image = im.open(self.image_path).convert("RGB").resize((320, 256))
         image_array = np.array(image) / 255.0
         img_array = tf.keras.utils.img_to_array(image_array)
         img_arr = tf.expand_dims(img_array, 0)
@@ -42,9 +43,9 @@ class ManualImageChecker:
         for filename in os.listdir(self.images_path):
             if filename.lower().endswith('.png'):
                 self.image_path = os.path.join(self.images_path, filename)
-            predictions = self.predict()
-            self.img_to_plot(predictions)
-            time.sleep(1)
+                predictions = self.predict()
+                self.img_to_plot(predictions)
+                time.sleep(1)
 
 img_checker_instance = ManualImageChecker()
 img_checker_instance.main()
