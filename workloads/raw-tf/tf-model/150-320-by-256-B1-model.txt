@@ -42,5 +42,7 @@
  NVIDIA GeForce RTX 4060, compute capability: 8.9
  Model using image as input and pixel point (x-y) as output.
  With randomness (3000).
+ Prefetch = Auto
+ Callbacks = Auto
  No validation
  No dropout.
