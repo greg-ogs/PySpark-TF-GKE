@@ -28,8 +28,8 @@
  Trainable params: 4,862,914 (18.55 MB)
  Non-trainable params: 0 (0.00 B)
  100 Epochs
- With 5561 MB memory:  -> device: 0, name: NVIDIA GeForce RTX 4060, compute capability: 8.9
+ NVIDIA GeForce RTX 4060, compute capability: 8.9
  Model using image as input and pixel point (x-y) as output.
- With randomness.
+ With randomness (9000).
  No validation
  No dropout.
