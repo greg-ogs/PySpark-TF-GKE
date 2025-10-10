@@ -293,16 +293,20 @@ def make_image_dataset(
         img = tf.cast(img, tf.float32) / 255.0
         return img, y
 
+    # Prioritize parallel processing for speed instead of RAM usage, tf.data.AUTOTUNE,
+    # set autotune to a hardcoded number to void RAM overflow.
     ds = ds.map(_load_and_preprocess, num_parallel_calls=tf.data.AUTOTUNE)
 
     if input_context is not None:
         ds = ds.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
 
     if shuffle:
-        ds = ds.shuffle(buffer_size=min(5000, len(filepaths)))
-    ds = ds.batch(batch_size).repeat().prefetch(tf.data.AUTOTUNE)
-    return ds
+        ds = ds.shuffle(buffer_size=min(3000, len(filepaths)))
 
+    # Prioritize parallel processing for speed instead of RAM usage, tf.data.AUTOTUNE
+    # set autotune to a hardcoded number to void RAM overflow.
+    ds = ds.batch(batch_size).repeat().prefetch(1)
+    return ds
 
 # ----------------------------
 # Model building
@@ -331,16 +335,22 @@ def build_cnn_model(input_shape: Tuple[int, int, int], num_outputs: int = 2, fla
     model = tf.keras.Sequential(
         [
             tf.keras.layers.Input(shape=input_shape),
+            tf.keras.layers.Conv2D(8, 5, padding="same"),
+            tf.keras.layers.PReLU(),
+            tf.keras.layers.MaxPooling2D(),
+            tf.keras.layers.Conv2D(16, 5, padding="same"),
+            tf.keras.layers.PReLU(),
+            tf.keras.layers.MaxPooling2D(),
             tf.keras.layers.Conv2D(32, 5, padding="same"),
             tf.keras.layers.PReLU(),
             tf.keras.layers.MaxPooling2D(),
             tf.keras.layers.Conv2D(64, 5, padding="same"),
             tf.keras.layers.PReLU(),
             tf.keras.layers.MaxPooling2D(),
-            tf.keras.layers.Conv2D(128, 5, padding="same"),
+            tf.keras.layers.Conv2D(64, 5, padding="same"),
             tf.keras.layers.PReLU(),
             tf.keras.layers.Flatten() if flat else tf.keras.layers.GlobalAveragePooling2D(),
-            tf.keras.layers.Dense(2592, activation="relu") if flat else tf.keras.layers.Dense(128, activation="relu"),
+            tf.keras.layers.Dense(2048, activation="relu") if flat else tf.keras.layers.Dense(128, activation="relu"),
             tf.keras.layers.Dense(num_outputs, activation="linear"),
         ]
     )
@@ -574,7 +584,7 @@ def run_deep_training(
             local_ds = tf.data.Dataset.from_tensor_slices((X, y))
             if input_context is not None:
                 local_ds = local_ds.shard(input_context.num_input_pipelines, input_context.input_pipeline_id)
-            local_ds = local_ds.shuffle(buffer_size=min(5000, len(X))).batch(batch_size).repeat()
+            local_ds = local_ds.shuffle(buffer_size=min(3000, len(X))).batch(batch_size).repeat()
             return local_ds
 
         with strategy.scope():
@@ -630,7 +640,7 @@ def run_deep_training(
         # Build dataset for single-process training (no coordinator)
         ds = tf.data.Dataset.from_tensor_slices((X, y))  # Format for the dataset (features, labels)
         # Shuffle with a modest buffer to avoid huge memory in coordinator and repeat
-        ds = ds.shuffle(buffer_size=min(5000, len(X))).batch(batch_size).repeat()
+        ds = ds.shuffle(buffer_size=min(3000, len(X))).batch(batch_size).repeat()
         model = build_deep_model(input_dim, num_classes)
         history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
 
@@ -638,11 +648,8 @@ def run_deep_training(
     save_path = os.path.join(output_dir, "model.keras")
     model.save(save_path)
     print(f"Model saved to: {save_path}")
-
-    # Log final metrics
-    final_acc = history.history.get("accuracy", [None])[-1]
-    print(f"Final training accuracy: {final_acc}")
-
+    history_as_dict = history.history
+    json.dump(history_as_dict, open(os.path.join(output_dir, "history.json"), "w"))
 
 def run_image_training(
     data_dir: str,
@@ -757,11 +764,13 @@ def run_image_training(
     save_path = os.path.join(output_dir, "model.keras")
     model.save(save_path)
     print(f"Model saved to: {save_path}")
+    history_as_dict = history.history
+    json.dump(history_as_dict, open(os.path.join(output_dir, "history.json"), "w"))
 
     final_mae = history.history.get("mae", [None])[-1]
     final_mse = history.history.get("mse", [None])[-1]
     final_loss = history.history.get("loss", [None])[-1]
-    print(f"Final training - loss: {final_loss}, mae: {final_mae}, mse: {final_mse}")
+
 
 
 def parse_args(argv: List[str]):
@@ -825,7 +834,7 @@ if __name__ == "__main__":
             ps_addrs=ps_addrs,
             chief_addr=(args.chief_addr if args.chief_addr else None),
             chief_port=args.chief_port,
-            flat_layer=False,
+            flat_layer=True,
         )
     else:
         run_deep_training(
