@@ -8,10 +8,11 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense
 import PIL.Image as im
+from tqdm import tqdm
 
 class ManualImageChecker:
     def __init__(self, image_path: str = "/app/infra/local/mysql-database/datasets/image-datasets/laser-spots"):
-        self.model = tf.keras.models.load_model("./tf-model/100-320-by-256-A1-model.keras")
+        self.model = tf.keras.models.load_model("./tf-model/150-320-by-256-B1-model.keras")
         self.model.summary()
         self.images_path = image_path
         self.image_path = None
@@ -21,31 +22,35 @@ class ManualImageChecker:
         image_array = np.array(image) / 255.0
         img_array = tf.keras.utils.img_to_array(image_array)
         img_arr = tf.expand_dims(img_array, 0)
-        prediction = self.model.predict(img_arr)
+        prediction = self.model.predict(img_arr, verbose=0)
         return prediction
 
-    def img_to_plot(self, predictions):
+    def img_to_plot(self, predictions, fig, ax):
+        x = predictions[0][0]
+        y = predictions[0][1]
         image_to_plot = im.open(self.image_path).convert("RGB")
-        self.x = predictions[0][0]
-        self.y = predictions[0][1]
-        plt.rcParams.update({'font.size': 30})
-        fig = plt.figure("Printing figure and coordinates", figsize=(11, 12.8))
-        ax = fig.add_subplot(1, 1, 1)
+        ax.clear()
         ax.imshow(image_to_plot, origin='lower')
-        plt.plot(self.x, self.y, marker='o', markersize=15, color='red')  # Swap X and Y for the rotated plot
-        # plt.title("Superpixels -- SLIC (%d segments)" % (self.n_segments))
-        plt.xlabel("pixels")
-        plt.ylabel("pixels")
-        plt.axis("on")
-        plt.show()
+        ax.plot(x, y, marker='o', markersize=15, color='red')
+        ax.set_title(f"Superpixels -- CNN-- Prediction for {self.image_path.split('/')[-1]}")
+        ax.set_xlabel("pixels")
+        ax.set_ylabel("pixels")
+        ax.axis("on")
+        # fig.show()
+        fig.savefig(f"./tf-model/plots/{self.image_path.split('/')[-1]}")
         
     def main(self):
-        for filename in os.listdir(self.images_path):
+
+        plt.rcParams.update({'font.size': 30})
+        fig, ax = plt.subplots(figsize=(24, 20))
+        for filename in tqdm(os.listdir(self.images_path)):
             if filename.lower().endswith('.png'):
                 self.image_path = os.path.join(self.images_path, filename)
                 predictions = self.predict()
-                self.img_to_plot(predictions)
+                self.img_to_plot(predictions, fig, ax)
                 time.sleep(1)
 
-img_checker_instance = ManualImageChecker()
-img_checker_instance.main()
+if __name__ == "__main__":
+    os.makedirs("./tf-model/plots/", exist_ok=True)
+    img_checker_instance = ManualImageChecker()
+    img_checker_instance.main()

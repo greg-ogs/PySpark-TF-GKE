@@ -46,3 +46,4 @@
  Callbacks = Auto
  No validation
  No dropout.
+ GPU Memory	6.5/8.0 GB
