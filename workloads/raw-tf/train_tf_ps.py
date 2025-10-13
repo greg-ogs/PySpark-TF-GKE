@@ -205,6 +205,10 @@ def make_image_dataset(
         batch_size: int,
         shuffle: bool = True,
         input_context: Optional[tf.distribute.InputContext] = None,
+        validation_split: float = 0.0,
+        subset: Optional[str] = None,
+        seed: int = 1337,
+        repeat: bool = True,
 ) -> tf.data.Dataset:
     """
     Create a tf.data.Dataset for regression on (x_px, y_px) from a flat folder of images
@@ -214,10 +218,9 @@ def make_image_dataset(
       {"image": "<file>", "point": {"x_px": <float>, "y_px": <float>},
        "image_size": {"width": <int>, "height": <int>}}
 
-    Targets are automatically scaled from original pixel coordinates to the
-    provided resized image_size so the model predicts pixels in the resized
-    space (not normalized). This keeps the target in pixels as requested while
-    matching the actual tensor shape given to the model.
+    Supports deterministic 80/20 (or custom) split via validation_split and subset.
+
+    Targets are pixel coordinates (no normalization) corresponding to the resized image space.
     """
     labels_path = os.path.join(data_dir, "clean_labels.jsonl")
     if not os.path.isfile(labels_path):
@@ -274,13 +277,22 @@ def make_image_dataset(
     if not filepaths:
         raise RuntimeError("No valid labeled images were parsed from clean_labels.jsonl")
 
-    # Optionally shuffle at the file list level for better randomness pre-epoch
-    if shuffle:
-        rng = np.random.default_rng(1337)
-        idx = np.arange(len(filepaths))
-        rng.shuffle(idx)
-        filepaths = [filepaths[i] for i in idx]
-        targets = [targets[i] for i in idx]
+    # Deterministic split across calls using the same seed
+    idx = np.arange(len(filepaths)) # ids for each image in the dataset
+    rng = np.random.default_rng(seed) # Numpy random number generator
+    rng.shuffle(idx)
+
+    if validation_split and subset in {"training", "validation"}:
+        val_size = int(len(idx) * float(validation_split))
+        val_size = max(1, min(len(idx) - 1, val_size))  # ensure 1..len-1
+        train_idx = idx[:-val_size]
+        val_idx = idx[-val_size:]
+        chosen = train_idx if subset == "training" else val_idx
+    else:
+        chosen = idx # takes a dataset with 100% of the images.
+
+    filepaths = [filepaths[i] for i in chosen]
+    targets = [targets[i] for i in chosen]
 
     fp_ds = tf.data.Dataset.from_tensor_slices(filepaths)
     y_ds = tf.data.Dataset.from_tensor_slices(tf.convert_to_tensor(targets, dtype=tf.float32))
@@ -303,9 +315,10 @@ def make_image_dataset(
     if shuffle:
         ds = ds.shuffle(buffer_size=min(3000, len(filepaths)))
 
-    # Prioritize parallel processing for speed instead of RAM usage, tf.data.AUTOTUNE
-    # set autotune to a hardcoded number to void RAM overflow.
-    ds = ds.batch(batch_size).repeat().prefetch(1)
+    ds = ds.batch(batch_size)
+    if repeat:
+        ds = ds.repeat()
+    ds = ds.prefetch(1)
     return ds
 
 # ----------------------------
@@ -637,12 +650,26 @@ def run_deep_training(
         history = type("_H", (), {"history": {"accuracy": [train_acc.result().numpy()]}})()
     else:
         print("Running single-process (no distributed strategy).")
-        # Build dataset for single-process training (no coordinator)
-        ds = tf.data.Dataset.from_tensor_slices((X, y))  # Format for the dataset (features, labels)
-        # Shuffle with a modest buffer to avoid huge memory in coordinator and repeat
-        ds = ds.shuffle(buffer_size=min(3000, len(X))).batch(batch_size).repeat()
+        # 80/20 train/validation split
+        n = len(X)
+        idx = np.arange(n)
+        rng = np.random.default_rng(1337)
+        rng.shuffle(idx)
+        val_size = max(1, int(n * 0.2))
+        train_idx, val_idx = idx[:-val_size], idx[-val_size:]
+        X_train, y_train = X[train_idx], y[train_idx]
+        X_val, y_val = X[val_idx], y[val_idx]
+
+        # Build datasets
+        ds_train = tf.data.Dataset.from_tensor_slices((X_train, y_train))
+        ds_train = ds_train.shuffle(buffer_size=min(3000, len(X_train))).batch(batch_size).repeat().prefetch(1)
+
+        ds_val = tf.data.Dataset.from_tensor_slices((X_val, y_val))
+        ds_val = ds_val.batch(batch_size).prefetch(1)
+
         model = build_deep_model(input_dim, num_classes)
-        history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
+        train_steps_per_epoch = max(1, len(X_train) // batch_size)
+        history = model.fit(ds_train, epochs=epochs, steps_per_epoch=train_steps_per_epoch, validation_data=ds_val)
 
     # Save model
     save_path = os.path.join(output_dir, "model.keras")
@@ -745,18 +772,37 @@ def run_image_training(
         history = type("_H", (), {"history": {"mae": [train_mae.result().numpy()], "mse": [train_mse.result().numpy()], "loss": [train_loss.result().numpy()]}})()
     else:
         print("Running single-process image training.")
-        ds = make_image_dataset(
+
+        total_images = count_images(data_dir)
+        # 80/20 train/validation split
+        val_split = 0.2
+        train_count = max(1, total_images - int(total_images * val_split))
+        steps_per_epoch = max(1, train_count // batch_size)
+
+        ds_train = make_image_dataset(
             data_dir=data_dir,
             image_size=(img_height, img_width),
             batch_size=batch_size,
             shuffle=True,
             input_context=None,
+            validation_split=val_split,
+            subset="training",
+            seed=1337,
+            repeat=True,
+        )
+        ds_val = make_image_dataset(
+            data_dir=data_dir,
+            image_size=(img_height, img_width),
+            batch_size=batch_size,
+            shuffle=False,
+            input_context=None,
+            validation_split=val_split,
+            subset="validation",
+            seed=1337,
+            repeat=False,
         )
         model = build_cnn_model(input_shape, num_outputs=2, flat=flat_layer,)
-        # log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        # tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
-        # history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch, callbacks=[tensorboard_callback])
-        history = model.fit(ds, epochs=epochs, steps_per_epoch=steps_per_epoch)
+        history = model.fit(ds_train, epochs=epochs, steps_per_epoch=steps_per_epoch, validation_data=ds_val)
         plt.plot(history.history['mae'])
         plt.xlabel('epoch')
         plt.show()
@@ -777,11 +823,11 @@ def parse_args(argv: List[str]):
     parser = argparse.ArgumentParser(description="Train TF Keras model on CSV or images (folder-per-class) with optional ParameterServerStrategy")
     parser.add_argument("--data-path", default=os.environ.get("DATA_PATH", "/app/infra/local/mysql-database/datasets/image-datasets/laser-spots"), help="Path to CSV or image root directory")
     parser.add_argument("--data-url", default=os.environ.get("DATA_URL", "/app/infra/local/mysql-database/datasets/csvs/health.csv"), help="HTTP(S) URL to CSV (used inside cluster if path not mounted)")
-    parser.add_argument("--data-is-images", action="store_false", help="Treat data-path as folder-per-class image dataset")
+    parser.add_argument("--data-is-images", action="store_true", help="Treat data-path as folder-per-class image dataset")
     parser.add_argument("--img-height", type=int, default=int(os.environ.get("IMG_HEIGHT", "256")), help="Image height for resizing")
     parser.add_argument("--img-width", type=int, default=int(os.environ.get("IMG_WIDTH", "320")), help="Image width for resizing")
     parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", "./tf-model"))
-    parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "150")))
+    parser.add_argument("--epochs", type=int, default=int(os.environ.get("EPOCHS", "1")))
     parser.add_argument("--batch-size", type=int, default=int(os.environ.get("BATCH_SIZE", "32")))
     parser.add_argument("--use-ps", action="store_true", help="Enable ParameterServerStrategy coordinator mode")
     parser.add_argument("--worker-replicas", type=int, default=int(os.environ.get("WORKER_REPLICAS", "2")))
