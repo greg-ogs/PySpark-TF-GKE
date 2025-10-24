@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  bastion:
+    image: gregogs/spark:bastion_workloads
+    container_name: spark-bastion-external
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      SPARK_DRIVER_HOST: host.docker.internal
+      SPARK_DRIVER_PORT: "7078"
+      SPARK_BLOCKMGR_PORT: "7079"
+      DB_HOST: host.docker.internal
+      DB_PORT: "3306"
+    ports:
+      - "7078:7078"   # Spark driver port
+      - "7079:7079"   # Spark block manager port
+    volumes:
+      - ../../../workloads:/workloads:rw
+      - ../mysql-database:/data:ro
+    command: ["bash", "-lc", "sleep infinity"]
+    networks:
+      - kind
+
+  tf-bastion:
+    image: gregogs/cuda:workers-v1.0
+    container_name: tf-bastion-external
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../../../workloads:/workloads:rw
+      - ../mysql-database/datasets/csvs/health.csv:/data/health.csv:ro
+      - ../raw-tf/config-kind-in-container:/root/.kube/config:ro
+    environment:
+      - KUBECONFIG=/root/.kube/config
+    ports:
+      - "2223:2223"   # TensorFlow coordinator gRPC port
+    command: [ "bash", "-lc", "sleep infinity" ]
+    networks:
+      - kind
+
+networks:
+  kind:
+    external: true
+    name: kind

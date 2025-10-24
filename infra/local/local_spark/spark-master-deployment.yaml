@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-master
+  labels:
+    app: spark-master
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-master
+  template:
+    metadata:
+      labels:
+        app: spark-master
+    spec:
+      serviceAccountName: spark-sa
+      nodeSelector:
+        kubernetes.io/hostname: desktop-worker
+      containers:
+      - name: spark-master
+        image: gregogs/spark:custom-with-jdbc
+        env:
+        - name: SPARK_MODE
+          value: "master"
+        - name: SPARK_MASTER_HOST
+          value: "0.0.0.0"
+        - name: SPARK_MASTER_PORT
+          value: "7077"
+        - name: SPARK_MASTER_WEBUI_PORT
+          value: "8080"
+        - name: GCP_PROJECT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: gcp-config
+              key: GCP_PROJECT_ID
+        ports:
+        - containerPort: 7077
+        - containerPort: 8080
+        args:
+        - /opt/spark/bin/spark-class
+        - org.apache.spark.deploy.master.Master

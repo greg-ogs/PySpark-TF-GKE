@@ -45,15 +45,15 @@ spec:
         - name: config-map
           mountPath: /mnt/config-map
       - name: clone-mysql
-        image: percona/percona-xtrabackup:8.4.0
+        image: gregogs/percona-xtrabackup:8.4.0
         securityContext:
-          runAsUser: 0
+          runAsUser: 999
         command:
         - bash
         - "-c"
         - |
           set -ex
-          microdnf install -y nmap-ncat
+          whoami
           # Skip the clone if data already exists.
           [[ -d /var/lib/mysql/mysql ]] && exit 0
           # Skip the clone on primary (ordinal index 0).
@@ -104,9 +104,9 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
       - name: xtrabackup
-        image: percona/percona-xtrabackup:8.4.0
+        image: gregogs/percona-xtrabackup:8.4.0
         securityContext:
-          runAsUser: 0
+          runAsUser: 999
         ports:
           - name: xtrabackup
             containerPort: 3307
@@ -115,10 +115,8 @@ spec:
           - "-c"
           - |
             set -ex
+            whoami
             cd /var/lib/mysql
-            
-            microdnf install -y nmap-ncat
-            
             # Determine binlog position of cloned data, if any.
             if [[ -f xtrabackup_slave_info && "x$(<xtrabackup_slave_info)" != "x" ]]; then
               # We are cloning from a replica. Parse the binlog file and position
@@ -150,11 +148,11 @@ spec:
             # Check if we need to complete a clone by starting replication.
             if [[ -f change_source_to.sql.in ]]; then
               echo "Waiting for mysqld to be ready (accepting connections)"
-              until mysql -h 127.0.0.1 -e "SELECT 1"; do sleep 1; done
+              until mysql -h 127.0.0.1 -u root -e "SELECT 1"; do sleep 1; done
             
               echo "Initializing replication from clone position"
               # Corrected the 'e' to '-e' here
-              mysql -h 127.0.0.1 \
+              mysql -h 127.0.0.1 -u root \
                     -e "RESET REPLICA ALL; $(<change_source_to.sql.in), \
                             SOURCE_HOST='mysql-0.mysql', \
                             SOURCE_USER='root', \

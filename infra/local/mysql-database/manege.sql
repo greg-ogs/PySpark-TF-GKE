@@ -1,0 +1,8 @@
+START TRANSACTION;
+DELETE
+FROM health_disparities
+WHERE id >= 1;
+
+COMMIT;
+
+ROLLBACK;

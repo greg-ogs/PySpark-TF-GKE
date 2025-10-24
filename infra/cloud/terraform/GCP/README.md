@@ -108,8 +108,7 @@ The primary method described here involves copying your script to the `gke_basti
 
 ### 1. Access Your GKE Cluster via the Bastion Host
 
-a.
-**Get the SSH command for the bastion host:**
+a.  **Get the SSH command for the bastion host:**
 If you have Terraform installed and are in your project directory, run:
 ```bash
 terraform output ssh_command
@@ -119,12 +118,10 @@ This will output a command similar to:
 gcloud compute ssh gke-bastion --zone=<your-zone> --project=<your-project-id>
 ```
 
-b.
-**SSH into the bastion host:**
+b.  **SSH into the bastion host:**
 Execute the command obtained in the previous step.
 
-c.
-**Verify `kubectl` access:**
+c.  **Verify `kubectl` access:**
 Once in the bastion host, confirm `kubectl` is configured and can communicate with your cluster:
 ```bash
 terraform output kubectl_command
@@ -135,33 +132,14 @@ kubectl get nodes
 ```
 You should see a list of your cluster nodes.
 
-### 2. Deploy spark manifests into the gke_bastion Instance
+### 2. Identify the Kubernetes Service IP for the Spark Master deployment
 
-a.
-If your `spark-master-deployment.yaml` (or another script) is on your local machine,
-you'll first need to copy it to the bastion host.
-You can use `gcloud compute scp`:
-```bash
-# From your local machine, not the bastion
-gcloud compute scp /path/to/your/local/spark-master-deployment.yaml <your-bastion-user>@gke-bastion:/tmp/spark-master-deployment.yaml --zone=<your-zone> --project=<your-project-id>
-```
-Replace placeholders accordingly. 
-`/tmp/spark-master-deployment.yaml` is a suggested path on the bastion.
-
-b.
-After copying all the manifests into the bastion instance, apply the manifests
-```bash
-kubectl apply -f /tmp/spark-master-deployment.yaml
-```
-
-### 3. Identify the Kubernetes Service IP for the Spark Master deployment
-
-Use the label defined in your Spark master deployment (`app: spark-master`) to find the pod name:
+a.  Use the label defined in your Spark master deployment (`app: spark-master`) to find the pod name:
 ```bash
 kubectl get services
 ```
 
-### 4. Copy Your PySpark Script to the gke_bastion Instance
+### 3. Copy Your PySpark Script to the gke_bastion Instance
 
 If your `main.py` (or another script) is on your local machine, you'll first need to copy it to the bastion host. You can use `gcloud compute scp`:
 ```bash
@@ -171,7 +149,7 @@ gcloud compute scp /path/to/your/local/spark.py <your-bastion-user>@gke-bastion:
 Replace placeholders accordingly. 
 `/tmp/main.py` is a suggested path on the bastion.
 
-### 5. Upload your dataset to google storage bucket
+### 4. Upload your dataset to google storage bucket
 Use the `upload_dataset.sh` to upload your dataset to google storage bucket. Edit the script to match the actual dataset name.
 ```bash
 bash ./upload_dataset.sh
@@ -212,7 +190,7 @@ This script:
 - Applies the ConfigMap with the project ID as variable holder for the gcs-connector in the submit command.
 - Restarts the Spark deployments to pick up the new service account.
 
-## Running Spark Jobs with GCS Access
+### 4. Running Spark Jobs with GCS Access
 
 Once Workload Identity is configured, you can run Spark jobs that access GCS without additional authentication:
 
@@ -227,73 +205,3 @@ spark-submit \
 ```
 
 The Spark pods will automatically use the GKE service account's permissions to access GCS.
-
-# MySQL Database StatefulSet (Only tested on local kind cluster)
-
-You can find the MySQL StatefulSet at `infra/mysql-database` directory. Is a basec deployment of a MySQL database for a 
-kubernetes cluster. It is based on the official MySQL Docker image and a modified version of percona-xtrabackup with the
-preinstalled required packeges not included in the official image based in redhat minimal image.
-
-> This is a work in progress.
-> Multi node is not available yet.
-> Taint is not available yet.
-
->[!WARNING]
-> Security isn't set yet.
-
-## Testing the MySQL database
-The workload is created using a temporal container.
-
-**For Bash:**
-```
-kubectl run mysql-client --image=mysql:8.4.0 -i --rm --restart=Never --\
-  mysql -h mysql-0.mysql <<EOF
-CREATE DATABASE test;
-CREATE TABLE test.messages (message VARCHAR(250));
-INSERT INTO test.messages VALUES ('hello');
-EOF
-```
-
-**And for Powershell:**
-```
-@"
-CREATE DATABASE test;
-CREATE TABLE test.messages (message VARCHAR(250));
-INSERT INTO test.messages VALUES ('hello');
-"@ | kubectl run mysql-client --image=mysql:8.4.0 -i --rm --restart=Never -- mysql -h mysql-0.mysql
-```
-
-Check the just created database and table with:
-
-**For Bash:**
-```
-kubectl run mysql-client --image=mysql:8.4.0 -i -t --rm --restart=Never --\
-  mysql -h mysql-read -e "SELECT * FROM test.messages"
-```
-
-**And for Powershell:**
-```
-kubectl run mysql-client --image=mysql:8.4.0 -i -t --rm --restart=Never -- `
-  mysql -h mysql-read -e "SELECT * FROM test.messages"
-```
-
-## Load a csv into a SQL table
-1.  If it is required, run a forward port command to map port 3306 in the local cluster.
-But the MySQL StatefulSet configuration has a load balancer service (mysql-exernal for rw 
-transactions) that can be used to connect to the database outside the cluster but in the same subnet.
-> Also, for Windows 11, the kind cluster maps the load balancer services ports to localhost in the host machine.
-
->[!WARNING]
-> Only for local development, may differ in cloud providers. 
-> This command is to map the service's port 3306 into the local machine if it is required.
->```
-> kubectl port-forward svc/mysql-external 3306:3306
->```
-
-2.  Run the python script (.\infra\local\mysql-database\load_csv.py) to upload the csv file 
-into the database. 
-> Check the network.
-> In a local development environment is running in the same "kind" subnetwork with the external ip or
-> in the "host" subnetwork when using the 127.0.0.1 ip.
-
-
